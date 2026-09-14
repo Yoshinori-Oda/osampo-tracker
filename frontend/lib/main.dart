@@ -9,7 +9,6 @@ Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
 
   final db = AppDatabase();
-  await db.seedDummyData();
 
   runApp(
     ProviderScope(

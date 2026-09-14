@@ -1,11 +1,9 @@
 import 'dart:io';
 import 'dart:async';
-import 'dart:math';
 import 'package:drift/drift.dart';
 import 'package:drift/native.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:path/path.dart' as p;
-import 'package:uuid/uuid.dart';
 import '../models/recording_session.dart';
 import '../models/status.dart';
 import '../models/move_method.dart';
