@@ -1,0 +1,29 @@
+services:
+  db:
+    image: postgis/postgis:16-3.4
+    container_name: location_postgis
+    platform: linux/amd64
+    environment:
+      POSTGRES_USER: authenticator
+      POSTGRES_PASSWORD: hoge
+      POSTGRES_DB: location_db
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgis_data:/var/lib/postgresql/data
+      - ./initdb.sql:/docker-entrypoint-initdb.d/initdb.sql
+
+  postgrest:
+    image: postgrest/postgrest
+    ports:
+      - "3000:3000"
+    environment:
+      PGRST_DB_URI: "postgres://authenticator:hoge@db:5432/location_db"
+      PGRST_DB_SCHEMA: "public"
+      PGRST_DB_ANON_ROLE: "web_anon"
+      PGRST_DB_CHANNEL_ENABLED: "true"
+    depends_on:
+      - db
+
+volumes:
+  postgis_data:
