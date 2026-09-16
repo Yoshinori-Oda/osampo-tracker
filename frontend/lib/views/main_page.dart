@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import '../providers/tracking_providers.dart';
 import 'recording_page.dart';
 import 'saved_sessions.dart';
 import 'analytics_page.dart';
@@ -13,11 +14,38 @@ class BottomNavIndexNotifier extends Notifier<int> {
 
 final bottomNavIndexProvider = NotifierProvider<BottomNavIndexNotifier, int>(BottomNavIndexNotifier.new);
 
-class MainPage extends ConsumerWidget {
+class MainPage extends ConsumerStatefulWidget {
   const MainPage({super.key});
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
+  ConsumerState<MainPage> createState() => _MainPageState();
+}
+
+class _MainPageState extends ConsumerState<MainPage> with WidgetsBindingObserver {
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addObserver(this);
+    // アプリ起動時に一度、他端末での変更を取り込む
+    ref.read(repositoryProvider).requestSync();
+  }
+
+  @override
+  void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    // バックグラウンドから復帰した際にも同期しておく
+    if (state == AppLifecycleState.resumed) {
+      ref.read(repositoryProvider).requestSync();
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
     final currentIndex = ref.watch(bottomNavIndexProvider);
 
     final pages = [

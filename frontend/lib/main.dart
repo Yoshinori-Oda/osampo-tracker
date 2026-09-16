@@ -4,6 +4,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'database/app_database.dart';
 import 'providers/tracking_providers.dart';
 import 'views/main_page.dart';
+import 'utils/delete_conflict_dialog.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -26,6 +27,7 @@ class MyApp extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
+      navigatorKey: navigatorKey,
       title: 'Position Tracking',
       debugShowCheckedModeBanner: false,
       theme: ThemeData(

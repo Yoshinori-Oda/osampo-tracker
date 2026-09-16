@@ -56,7 +56,10 @@ class AppDatabase extends _$AppDatabase {
 
   Stream<List<Session>> watchAllSessions() {
     return (select(sessions)
-        ..where((tbl) => tbl.endedAt.isNotNull())
+        ..where((tbl) => tbl.status.isNotIn([
+              Status.inProgress.index,
+              Status.deletedUnsynced.index,
+            ]))
         ..orderBy([(tbl) => OrderingTerm.desc(tbl.startedAt)]))
       .watch();
   }
@@ -169,6 +172,22 @@ class AppDatabase extends _$AppDatabase {
     return (delete(sessions)..where((tbl) => tbl.id.equals(session.sessionId))).go();
   }
 
+  // 保存済みセッションの削除。リモートに一度も存在しない行はそのまま物理削除し、
+  // 既にリモートにある行はdeletedUnsyncedにして次回同期でtombstoneをpushする
+  Future<void> deleteSession({required Session session}) async {
+    if (session.status == Status.inProgress || session.status == Status.ended) {
+      await (delete(sessions)..where((tbl) => tbl.id.equals(session.id))).go();
+      return;
+    }
+
+    await (update(sessions)..where((tbl) => tbl.id.equals(session.id))).write(
+      SessionsCompanion(
+        status: const Value(Status.deletedUnsynced),
+        updatedAt: Value(DateTime.now())
+      )
+    );
+  }
+
   Future<void> markAsSynced({required String sessionId, required DateTime syncTime}) {
     return (update(sessions)..where((tbl) => tbl.id.equals(sessionId))).write(
       SessionsCompanion(
@@ -176,6 +195,13 @@ class AppDatabase extends _$AppDatabase {
         updatedAt: Value(DateTime.now())
       )
     );
+  }
+
+  // 削除が確定した(自分のpushが通った/他端末からのtombstoneをpullした)行を物理削除する
+  // (track_pointsはFKでcascade)。deletedUnsyncedのpushが通った時点でリモートとも状態が一致するので
+  // 中間状態を残さずそのまま消してよい
+  Future<void> finalizeSessionDeletion({required String sessionId}) {
+    return (delete(sessions)..where((tbl) => tbl.id.equals(sessionId))).go();
   }
 
   Future<void> updateSession({
@@ -219,7 +245,11 @@ class AppDatabase extends _$AppDatabase {
 
   Future<List<Session>> getUnsyncedSessions() {
     return (select(sessions)
-      ..where((tbl) => tbl.status.equals(Status.synced.index).not())
+      ..where((tbl) => tbl.status.isIn([
+            Status.ended.index,
+            Status.updated.index,
+            Status.deletedUnsynced.index,
+          ]))
       ..orderBy([(tbl) => OrderingTerm.desc(tbl.startedAt)])
     ).get();
   }

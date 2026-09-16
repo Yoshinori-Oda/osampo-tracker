@@ -2,7 +2,7 @@
 CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
 CREATE EXTENSION IF NOT EXISTS postgis;
 
-DROP INDEX IF EXISTS idx_sessions_user_id, idx_sessions_updated_at, idx_track_points_session_id;
+DROP INDEX IF EXISTS idx_sessions_user_id, idx_sessions_updated_at, idx_sessions_deleted_at, idx_track_points_session_id;
 DROP TABLE IF EXISTS track_points, sessions, users CASCADE;
 
 -- user table (users)
@@ -21,6 +21,7 @@ CREATE TABLE sessions (
     ended_at TIMESTAMP WITH TIME ZONE NOT NULL,
     is_favorite BOOLEAN NOT NULL DEFAULT FALSE,
     updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    deleted_at TIMESTAMP WITH TIME ZONE DEFAULT NULL,
 
     move_method VARCHAR(50) NOT NULL,
     total_distance DOUBLE PRECISION NOT NULL DEFAULT 0.0,
@@ -32,6 +33,8 @@ CREATE TABLE sessions (
 
 CREATE INDEX idx_sessions_user_id ON sessions(user_id);
 CREATE INDEX idx_sessions_updated_at ON sessions(updated_at);
+-- パージ処理(deleted_at < now())の対象抽出用。tombstone行は少数のはずなので部分インデックスにする
+CREATE INDEX idx_sessions_deleted_at ON sessions(deleted_at) WHERE deleted_at IS NOT NULL;
 
 -- track points table (track_points)
 CREATE TABLE track_points (
@@ -139,6 +142,7 @@ BEGIN
             s.max_altitude,
             s.min_altitude,
             s.updated_at,
+            s.deleted_at,
             COALESCE(
                 (
                     SELECT jsonb_agg(

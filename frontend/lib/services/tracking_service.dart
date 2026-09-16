@@ -277,6 +277,11 @@ class TrackingService {
     await _repo.toggleFavorite(session);
   }
 
+  // 保存済みセッション一覧からの削除
+  Future<void> deleteSession(Session session) async {
+    await _repo.deleteSession(session);
+  }
+
   void dispose() {
     _positionStreamSubscription?.cancel();
     _timer?.cancel();

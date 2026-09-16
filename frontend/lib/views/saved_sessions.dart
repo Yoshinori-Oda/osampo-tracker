@@ -1,22 +1,63 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import '../database/app_database.dart';
 import '../providers/tracking_providers.dart';
 import 'session_detail_view.dart';
 
 
-class SavedSessionsView extends ConsumerWidget {
+class SavedSessionsView extends ConsumerStatefulWidget {
   const SavedSessionsView({super.key});
 
   @override
-  Widget build(BuildContext cnotext, WidgetRef ref) {
+  ConsumerState<SavedSessionsView> createState() => _SavedSessionsViewState();
+}
+
+class _SavedSessionsViewState extends ConsumerState<SavedSessionsView> {
+  bool _isEditMode = false;
+
+  Future<bool> _confirmDelete(Session session) async {
+    return await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('セッションを削除しますか?'),
+        content: Text('「${session.name}」を削除します。この操作は取り消せません。'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(false),
+            child: const Text('キャンセル'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(true),
+            child: const Text('削除', style: TextStyle(color: Colors.red)),
+          ),
+        ],
+      ),
+    ) ?? false;
+  }
+
+  Future<void> _confirmAndDelete(Session session) async {
+    final service = ref.read(trackingServiceProvider);
+    if (await _confirmDelete(session)) {
+      await service.deleteSession(session);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
     // provider settings
     final completedSessions = ref.watch(sessionsStreamProvider);
     final service = ref.read(trackingServiceProvider);
-    
+
     return Scaffold(
       appBar: AppBar(
         title: const Text('保存済セッション一覧'),
-        centerTitle: true
+        centerTitle: true,
+        actions: [
+          TextButton(
+            onPressed: () => setState(() => _isEditMode = !_isEditMode),
+            child: Text(_isEditMode ? '完了' : '編集', style: TextStyle(color: Colors.red)),
+          ),
+        ],
       ),
       body: completedSessions.when(
         loading: () => const SizedBox(
@@ -32,19 +73,36 @@ class SavedSessionsView extends ConsumerWidget {
             itemCount: data.length,
             itemBuilder: (context, index) {
               final session = data[index];
-              return ListTile(
-                title: Text(session.name!),
-                subtitle: Text(session.startedAt.toString()),
-                leading: IconButton(
-                  icon: Icon(session.isFavorite ? Icons.star_outlined: Icons.star_border_outlined),
-                  onPressed: () => service.toggleFavorite(session)
+              return Dismissible(
+                key: ValueKey(session.id),
+                direction: DismissDirection.endToStart,
+                background: Container(
+                  color: Colors.redAccent,
+                  alignment: Alignment.centerRight,
+                  padding: const EdgeInsets.symmetric(horizontal: 20),
+                  child: const Icon(Icons.delete, color: Colors.white),
                 ),
-                trailing: Icon(Icons.arrow_right),
-                onTap: () {
-                  Navigator.of(context).push(
-                    MaterialPageRoute(builder: (context) => SessionDetailView(session: session))
-                  );
-                }
+                confirmDismiss: (direction) => _confirmDelete(session),
+                onDismissed: (direction) => service.deleteSession(session),
+                child: ListTile(
+                  title: Text(session.name!),
+                  subtitle: Text(session.startedAt.toString()),
+                  leading: IconButton(
+                    icon: Icon(session.isFavorite ? Icons.star_outlined: Icons.star_border_outlined),
+                    onPressed: () => service.toggleFavorite(session)
+                  ),
+                  trailing: _isEditMode
+                    ? IconButton(
+                        icon: const Icon(Icons.delete_outline, color: Colors.redAccent),
+                        onPressed: () => _confirmAndDelete(session),
+                      )
+                    : const Icon(Icons.arrow_right),
+                  onTap: _isEditMode ? null : () {
+                    Navigator.of(context).push(
+                      MaterialPageRoute(builder: (context) => SessionDetailView(session: session))
+                    );
+                  }
+                ),
               );
             }
           )

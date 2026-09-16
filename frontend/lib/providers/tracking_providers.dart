@@ -4,6 +4,7 @@ import '../database/app_database.dart';
 import '../repositories/tracking_repository.dart';
 import '../services/tracking_service.dart';
 import '../models/recording_session.dart';
+import '../utils/delete_conflict_dialog.dart';
 
 // DB provider
 final databaseProvider = Provider<AppDatabase>((ref) {
@@ -15,7 +16,11 @@ final databaseProvider = Provider<AppDatabase>((ref) {
 // repository provider
 final repositoryProvider = Provider<TrackingRepository>((ref) {
   final db = ref.watch(databaseProvider);
-  final repo = TrackingRepository(db, '11111111-1111-1111-1111-111111111111');
+  final repo = TrackingRepository(
+    db,
+    '11111111-1111-1111-1111-111111111111',
+    onDeleteConflict: showDeleteConflictDialog,
+  );
   ref.onDispose(() => repo.dispose());
   return repo;
 });

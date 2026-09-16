@@ -25,5 +25,11 @@ services:
     depends_on:
       - db
 
+  cron:
+    build: ./cron
+    container_name: location_cron
+    depends_on:
+      - postgrest
+
 volumes:
   postgis_data:

@@ -8,6 +8,20 @@ import '../models/recording_session.dart';
 import '../models/status.dart';
 import '../models/move_method.dart';
 
+// 削除されたセッションの猶予期間(リモートのtombstoneをこの期間残してから物理パージする)
+const Duration _deletionRetention = Duration(days: 90);
+
+enum PushOutcome { succeeded, retryableError, conflict }
+
+class PushResult {
+  final PushOutcome outcome;
+  final Session? conflictSession;
+  const PushResult(this.outcome, [this.conflictSession]);
+}
+
+// 他端末で削除されたセッションをローカルで編集していた場合の競合解決の選択肢
+enum DeleteConflictChoice { discard, keep }
+
 /// syncing service for remote PostgreSQL server and local Drift server
 class TrackingRepository {
   final AppDatabase _db;
@@ -15,6 +29,7 @@ class TrackingRepository {
   final SharedPreferencesAsync _asyncPrefs = SharedPreferencesAsync();
   static const String _kLastSyncedAtKey = 'last_synced_at';
   final String _userId;
+  final Future<DeleteConflictChoice> Function(Session session)? onDeleteConflict;
   Timer? _retryTimer;
 
   bool get isSchedulingRetry => _retryTimer != null;
@@ -25,9 +40,9 @@ class TrackingRepository {
     } catch (e) {
       return null;
     }
-  } 
+  }
 
-  TrackingRepository(this._db, this._userId, [http.Client? client])
+  TrackingRepository(this._db, this._userId, {http.Client? client, this.onDeleteConflict})
     : _client = client ?? http.Client() {
       // for test: delete last_synced_at every re-build
       _clearLastSyncedAtForTest();
@@ -42,8 +57,11 @@ class TrackingRepository {
   // short timeout duration
   static const Duration _timeoutDuration = Duration(seconds: 3);
 
+  // ローカルの変更直後の同期依頼。中身はrequestSyncと同じ
+  Future<void> onUpdateData() => requestSync();
+
   // make sync action if nothing waiting for sync, or wait for next time of every 5 min-activating timer
-  Future<void> onUpdateData() async {
+  Future<void> requestSync() async {
     if (isSchedulingRetry) return;
     if (isSyncing) {
       _startRetryTimer();
@@ -82,15 +100,23 @@ class TrackingRepository {
     try {
       isSyncing = true;
       final now = DateTime.now();
+
       // push all unsynced sessions
-      final isPushSucceeded = await pushUnsyncedSessions(syncTime: now);
-      print(isPushSucceeded ? '[sync] push succeeded' : '[sync] push failed');
+      final pushResult = await pushUnsyncedSessions(syncTime: now);
+      print('[sync] push result: ${pushResult.outcome}');
+
+      // 他端末で削除済みのセッションを編集していた場合はダイアログ等で解決してからpullへ進む
+      if (pushResult.outcome == PushOutcome.conflict) {
+        await _resolveDeleteConflict(pushResult.conflictSession!, syncTime: now);
+      } else if (pushResult.outcome == PushOutcome.retryableError) {
+        return false;
+      }
 
       // pull remote data to local
       final isPullSucceeded = await fetchRemoteSessions(syncTime: now);
       print(isPullSucceeded ? '[sync] pull succeeded' : '[sync] pull failed');
 
-      isSucceeded = isPushSucceeded && isPullSucceeded;
+      isSucceeded = isPullSucceeded;
     } on TimeoutException {
       // do nothing if timeouted
       print('[sync] sync failed by timeout');
@@ -108,13 +134,9 @@ class TrackingRepository {
   }
 
   // push all unsynced sessions
-  Future<bool> pushUnsyncedSessions({required DateTime syncTime}) async {
-    bool isSucceeded = true;
-
-    // list all of unsynced sessions
+  // 500系エラー・削除競合はどちらも「これ以上このサイクルで通信を続けない」シグナルとしてcancel扱いにする
+  Future<PushResult> pushUnsyncedSessions({required DateTime syncTime}) async {
     final unsyncedSessions = await _db.getUnsyncedSessions();
-
-    if (unsyncedSessions.isEmpty) return true;
 
     for (final session in unsyncedSessions) {
       late http.Response response;
@@ -122,23 +144,66 @@ class TrackingRepository {
         response = await registerSession(session: session, syncTime: syncTime);
       } else if (session.status == Status.updated) {
         response = await updateSession(session: session, syncTime: syncTime);
+        if (response.statusCode ~/ 100 == 2 && _isEmptyRepresentation(response)) {
+          // 対象がis_deleted済み(=他端末で削除済み)で更新が1件も当たらなかった
+          return PushResult(PushOutcome.conflict, session);
+        }
+      } else if (session.status == Status.deletedUnsynced) {
+        response = await pushSessionDeletion(session: session, syncTime: syncTime);
       } else {
         continue;
       }
 
-      // change syncStatus to 'synced' if succeeded
       if (response.statusCode ~/ 100 == 2) {
-        await _db.markAsSynced(sessionId: session.id, syncTime: syncTime);
+        if (session.status == Status.deletedUnsynced) {
+          await _db.finalizeSessionDeletion(sessionId: session.id);
+        } else {
+          await _db.markAsSynced(sessionId: session.id, syncTime: syncTime);
+        }
       } else if (response.statusCode ~/ 100 == 5) {
-        isSucceeded = false;
-        break; // cancel all if server is not responsible
+        return const PushResult(PushOutcome.retryableError); // cancel all if server is not responsible
       } else {
-        isSucceeded = false;
         print(response.statusCode);
+        return const PushResult(PushOutcome.retryableError);
       }
     }
 
-    return isSucceeded;
+    return const PushResult(PushOutcome.succeeded);
+  }
+
+  // 他端末での削除とローカルの未同期な変更が競合した際の解決
+  Future<void> _resolveDeleteConflict(Session session, {required DateTime syncTime}) async {
+    final choice = onDeleteConflict != null
+      ? await onDeleteConflict!(session)
+      : DeleteConflictChoice.discard;
+
+    if (choice == DeleteConflictChoice.discard) {
+      await _db.finalizeSessionDeletion(sessionId: session.id);
+      return;
+    }
+
+    try {
+      final response = await reviveSession(session: session, syncTime: syncTime);
+      if (response.statusCode ~/ 100 == 2 && _isEmptyRepresentation(response)) {
+        // 長周期パージで既に物理削除されていたので、初回登録として作り直す
+        final registerResponse = await registerSession(session: session, syncTime: syncTime);
+        if (registerResponse.statusCode ~/ 100 == 2) {
+          await _db.markAsSynced(sessionId: session.id, syncTime: syncTime);
+        }
+      } else if (response.statusCode ~/ 100 == 2) {
+        await _db.markAsSynced(sessionId: session.id, syncTime: syncTime);
+      }
+    } on TimeoutException {
+    } on SocketException {}
+  }
+
+  bool _isEmptyRepresentation(http.Response response) {
+    try {
+      final decoded = json.decode(response.body);
+      return decoded is List && decoded.isEmpty;
+    } catch (_) {
+      return false;
+    }
   }
 
   Future<http.Response> registerSession({required Session session, required DateTime syncTime}) async {
@@ -197,6 +262,8 @@ class TrackingRepository {
     return response;
   }
 
+  // 通常の更新。deleted_at=is.nullを条件に含めることで、他端末で削除済みの行を
+  // 誤って上書きしないようにし、0件ヒットで削除競合を検出できるようにしている
   Future<http.Response> updateSession({required Session session, required DateTime syncTime}) async {
     final body = json.encode({
       'id': session.id,
@@ -207,13 +274,52 @@ class TrackingRepository {
     });
 
     final response = await _client.patch(
-      Uri.parse('$_baseUrl/sessions?id=eq.${session.id}'),
-      headers: {'Content-Type': 'application/json'},
+      Uri.parse('$_baseUrl/sessions?id=eq.${session.id}&deleted_at=is.null'),
+      headers: {
+        'Content-Type': 'application/json',
+        'Prefer': 'return=representation',
+      },
       body: body
     )
     .timeout(_timeoutDuration);
 
     return response;
+  }
+
+  // 削除のpush。既に削除済み/パージ済みでも0件ヒットで構わない(目的の状態と一致するため)
+  Future<http.Response> pushSessionDeletion({required Session session, required DateTime syncTime}) async {
+    final body = json.encode({
+      'deleted_at': syncTime.add(_deletionRetention).toUtc().toIso8601String(),
+      'updated_at': syncTime.toUtc().toIso8601String(),
+    });
+
+    return await _client.patch(
+      Uri.parse('$_baseUrl/sessions?id=eq.${session.id}'),
+      headers: {'Content-Type': 'application/json'},
+      body: body
+    )
+    .timeout(_timeoutDuration);
+  }
+
+  // 削除tombstoneの取り消し(蘇生)。deleted_atフィルタは付けず、idのみで対象を特定する
+  Future<http.Response> reviveSession({required Session session, required DateTime syncTime}) async {
+    final body = json.encode({
+      'name': session.name,
+      'move_method': session.moveMethod.name,
+      'is_favorite': session.isFavorite,
+      'deleted_at': null,
+      'updated_at': syncTime.toUtc().toIso8601String(),
+    });
+
+    return await _client.patch(
+      Uri.parse('$_baseUrl/sessions?id=eq.${session.id}'),
+      headers: {
+        'Content-Type': 'application/json',
+        'Prefer': 'return=representation',
+      },
+      body: body
+    )
+    .timeout(_timeoutDuration);
   }
 
   // fetch data from remote DB
@@ -243,7 +349,14 @@ class TrackingRepository {
         final List<dynamic> remoteSessions = json.decode(response.body);
 
         for (final item in remoteSessions) {
-          final String sessionId = item['id']; 
+          final String sessionId = item['id'];
+
+          // 他端末での削除tombstoneならローカルの行を物理削除して終わり
+          if (item['deleted_at'] != null) {
+            await _db.finalizeSessionDeletion(sessionId: sessionId);
+            continue;
+          }
+
           // register / update sessions / trackPoints
           // sessions setup
           final session = Session(
@@ -344,6 +457,11 @@ class TrackingRepository {
     required RecordingSession session,
   }) async {
     await _db.deleteRecordingSession(session: session);
+    return await onUpdateData();
+  }
+
+  Future<void> deleteSession(Session session) async {
+    await _db.deleteSession(session: session);
     return await onUpdateData();
   }
 
