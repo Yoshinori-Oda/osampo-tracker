@@ -393,7 +393,7 @@ class TrackingRepository {
         }
 
         // update last_synced_at
-        _asyncPrefs.setString(_kLastSyncedAtKey, syncTime.toIso8601String());
+        _asyncPrefs.setString(_kLastSyncedAtKey, syncTime.toUtc().toIso8601String());
 
       } else {
         print('[sync] pull failed by http status code ${response.statusCode}');
