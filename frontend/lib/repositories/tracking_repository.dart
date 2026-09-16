@@ -470,6 +470,20 @@ class TrackingRepository {
     return await onUpdateData();
   }
 
+  Future<void> updateSessionInfo({
+    required Session session,
+    required String sessionName,
+    required MoveMethod moveMethod,
+  }) async {
+    await _db.updateSession(
+      session: session,
+      sessionName: sessionName,
+      moveMethod: moveMethod,
+      isFavorite: session.isFavorite,
+    );
+    return await onUpdateData();
+  }
+
   void dispose() {
     _stopReryTimer();
     _client.close();
