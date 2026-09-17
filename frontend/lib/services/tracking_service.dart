@@ -282,6 +282,19 @@ class TrackingService {
     await _repo.deleteSession(session);
   }
 
+  // 保存済みセッション一覧からの名前・移動手段の編集
+  Future<void> updateSessionInfo({
+    required Session session,
+    required String sessionName,
+    required MoveMethod moveMethod,
+  }) async {
+    await _repo.updateSessionInfo(
+      session: session,
+      sessionName: sessionName,
+      moveMethod: moveMethod,
+    );
+  }
+
   void dispose() {
     _positionStreamSubscription?.cancel();
     _timer?.cancel();

@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../database/app_database.dart';
+import '../models/move_method.dart';
 import '../providers/tracking_providers.dart';
 import 'session_detail_view.dart';
 
@@ -40,6 +41,72 @@ class _SavedSessionsViewState extends ConsumerState<SavedSessionsView> {
     if (await _confirmDelete(session)) {
       await service.deleteSession(session);
     }
+  }
+
+  Future<void> _showEditDialog(Session session) async {
+    final nameController = TextEditingController(text: session.name);
+    MoveMethod selectedMethod = session.moveMethod;
+
+    await showDialog<void>(
+      context: context,
+      builder: (dialogContext) {
+        return StatefulBuilder(
+          builder: (context, setState) {
+            return AlertDialog(
+              title: const Text('セッションを編集'),
+              content: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  TextField(
+                    controller: nameController,
+                    decoration: const InputDecoration(
+                      labelText: 'セッション名',
+                      border: OutlineInputBorder()
+                    )
+                  ),
+                  const SizedBox(height: 16),
+                  DropdownButtonFormField<MoveMethod>(
+                    initialValue: selectedMethod,
+                    decoration: const InputDecoration(
+                      labelText: '移動手段',
+                      border: OutlineInputBorder()
+                    ),
+                    items: MoveMethod.values.map((method) {
+                      return DropdownMenuItem(
+                        value: method,
+                        child: Text(method.label)
+                      );
+                    }).toList(),
+                    onChanged: (val) {
+                      if (val != null) setState(() => selectedMethod = val);
+                    }
+                  )
+                ]
+              ),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.of(dialogContext).pop(),
+                  child: const Text('キャンセル'),
+                ),
+                ElevatedButton(
+                  onPressed: () async {
+                    Navigator.of(dialogContext).pop();
+                    final trimmedName = nameController.text.trim();
+                    final service = ref.read(trackingServiceProvider);
+                    await service.updateSessionInfo(
+                      session: session,
+                      sessionName: trimmedName.isEmpty ? session.name! : trimmedName,
+                      moveMethod: selectedMethod,
+                    );
+                  },
+                  child: const Text('保存'),
+                )
+              ]
+            );
+          }
+        );
+      }
+    );
   }
 
   @override
@@ -97,7 +164,7 @@ class _SavedSessionsViewState extends ConsumerState<SavedSessionsView> {
                         onPressed: () => _confirmAndDelete(session),
                       )
                     : const Icon(Icons.arrow_right),
-                  onTap: _isEditMode ? null : () {
+                  onTap: _isEditMode ? () => _showEditDialog(session) : () {
                     Navigator.of(context).push(
                       MaterialPageRoute(builder: (context) => SessionDetailView(session: session))
                     );
