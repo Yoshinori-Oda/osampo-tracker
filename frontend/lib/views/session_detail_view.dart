@@ -259,21 +259,22 @@ class _DetailMapViewState extends State<_DetailMapView> {
     // 画面枠に最適フィットさせるバウンディングボックスの作成
     final bounds = LatLngBounds.fromPoints(points);
 
-    // 描画直後にカメラ位置・ズーム倍率を自動最適化
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      _mapController.fitCamera(
-        CameraFit.bounds(
-          bounds: bounds,
-          padding: const EdgeInsets.all(36.0), // 画面縁からの余白設定
-        ),
-      );
-    });
-
     return FlutterMap(
       mapController: _mapController,
       options: MapOptions(
         initialCenter: bounds.center,
         initialZoom: 14.0,
+        // 初期表示時にbounds全体が収まるようカメラを自動フィットさせる。
+        // build()内でMapController.fitCamera()を後から呼ぶと、TileLayerの
+        // 初回タイル読み込みと競合してタイルがグレーのまま表示されなくなるため、
+        // MapOptions.initialCameraFitを使ってレイアウト確定後に一度だけ適用する
+        initialCameraFit: CameraFit.bounds(
+          bounds: bounds,
+          padding: const EdgeInsets.all(36.0), // 画面縁からの余白設定
+          // トラックポイントが1点のみ(幅・高さ0の退化したbounds)の場合、
+          // ズーム計算がInfinityになりタイルが表示されなくなるため上限を設ける
+          maxZoom: 18.0,
+        ),
         // マップ操作は無効化 (北上固定)
         interactionOptions: const InteractionOptions(
           flags: InteractiveFlag.none,
