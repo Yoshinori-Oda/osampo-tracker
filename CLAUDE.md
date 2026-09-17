@@ -29,7 +29,10 @@ Claude Code がこのプロジェクトで作業する際のコンテキスト�
             - repositories/: リモート同期ロジック(push/pull/競合解決)
             - services/: 位置情報トラッキングのドメインロジック
             - providers/: Riverpodのprovider定義
-            - views/: 画面
+            - views/: 画面(例: saved_sessions.dartは保存済みセッション一覧。編集モード中に
+              ListTileをタップすると名前・移動手段を編集するダイアログを表示する。名前欄は
+              空欄でsubmitされた場合は変更しない。移動手段は`DropdownButtonFormField<MoveMethod>`
+              で選択する)
             - utils/: navigatorKeyやダイアログ等、UI外から呼ぶための小物
         - Android: アンドロイド端末設定用ディレクトリ
         - iOS: iOS端末設定用ディレクトリ
@@ -103,6 +106,10 @@ pull型差分同期(`updated_at`ベース)を採用している。設計の要�
   (`_clearLastSyncedAtForTest`)。本番相当の挙動を確認したい場合はこれを外す必要がある
 - PostgRESTのテーブル直叩きPATCHはidだけで絞ると`deleted_at`済みの行も無条件に上書きできて
   しまう。競合検出が必要な更新には`&deleted_at=is.null`等のフィルタを必ず付けること
+- `TrackingRepository`には既にHTTP PATCH送信用の内部メソッド`updateSession()`が存在する
+  (リモートへのpush用)。ローカルの名前・移動手段編集用ラッパーはこれと同名にすると
+  `flutter analyze`で`duplicate_definition`エラーになるので、`updateSessionInfo()`のように
+  別名にすること
 - backendはDockerが必須(この開発環境ではDocker自体が使えない場合があるため、SQL変更は
   目視レビューに留まり実DBでの検証ができないことがある)
 
