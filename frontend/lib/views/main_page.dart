@@ -83,23 +83,30 @@ class _MainPageState extends ConsumerState<MainPage> with WidgetsBindingObserver
       ),
     ];
 
+    // バナーの分だけステータスバー避けのpaddingを上に1回だけ充てる。
+    // 下のタブ側(各AppBar)には二重にpaddingがかからないよう、ここで消費しておく
+    final topInset = MediaQuery.of(context).padding.top;
+
     return Scaffold(
       body: Column(
         children: [
-          if (hasAnyBanner)
-            SafeArea(
-              bottom: false,
-              child: Column(
-                children: [
-                  const RecordingPhaseBannerView(),
-                  const LocationBannerView()
-                ]
-              )
-            ),
+          Padding(
+            padding: EdgeInsets.only(top: hasAnyBanner ? topInset : 0),
+            child: Column(
+              children: [
+                const RecordingPhaseBannerView(),
+                const LocationBannerView()
+              ]
+            )
+          ),
           Expanded(
-            child: IndexedStack(
-              index: currentIndex,
-              children: pages
+            child: MediaQuery.removePadding(
+              context: context,
+              removeTop: hasAnyBanner,
+              child: IndexedStack(
+                index: currentIndex,
+                children: pages
+              )
             )
           )
         ]
