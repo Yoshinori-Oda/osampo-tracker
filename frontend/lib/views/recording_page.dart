@@ -7,6 +7,7 @@ import '../providers/tracking_providers.dart';
 import '../services/tracking_service.dart' show StartRecordingBlockedException;
 import '../utils/save_or_discard_dialog.dart';
 import '../widgets/compass.dart';
+import '../widgets/gps_help_link.dart';
 import 'map_view.dart';
 
 class RecordingPage extends ConsumerStatefulWidget {
@@ -159,6 +160,7 @@ class _RecordingPageState extends ConsumerState<RecordingPage> {
             title: const Text('収録を開始できません'),
             content: const Text('現在地を取得できませんでした。電波状況の良い場所で再試行してください。'),
             actions: [
+              GpsHelpLinkButton(textColor: Theme.of(dialogContext).colorScheme.primary),
               TextButton(
                 onPressed: () => Navigator.of(dialogContext).pop(false),
                 child: const Text('閉じる')
