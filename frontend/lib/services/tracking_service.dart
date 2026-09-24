@@ -454,8 +454,9 @@ class TrackingService {
   }
 
   // stop recording
-  Future<void> stopRecording({bool skipFinalPositionFetch = false}) async {
-    if (!isRecording) return;
+  // 戻り値: null=最終ポイントの取得を試みなかった、true=取得できた、false=取得を試みたが失敗した
+  Future<bool?> stopRecording({bool skipFinalPositionFetch = false}) async {
+    if (!isRecording) return null;
     _setPhase(RecordingPhase.stopping);
 
     // end session
@@ -463,20 +464,31 @@ class TrackingService {
     _session = _session!.copyWith(endedAt: now);
 
     // record final point (位置情報が失われた状態からの強制停止時は取得を試みない)
+    bool? finalPointFetched;
     if (!skipFinalPositionFetch && _session!.elapsedSeconds % 5 != 0) {
-      final currentPosition = await Geolocator.getCurrentPosition(
-        locationSettings: const LocationSettings(accuracy: LocationAccuracy.high)
-      );
-      _currentPositionController.add(currentPosition);
-      _lastPosition = currentPosition;
+      try {
+        final currentPosition = await Geolocator.getCurrentPosition(
+          locationSettings: const LocationSettings(
+            accuracy: LocationAccuracy.high,
+            timeLimit: Duration(seconds: 1)
+          )
+        );
+        _currentPositionController.add(currentPosition);
+        _lastPosition = currentPosition;
 
-      await _repo.addTrackPoint(
-        sessionId: _session!.sessionId,
-        latitude: currentPosition.latitude,
-        longitude: currentPosition.longitude,
-        altitude: currentPosition.altitude,
-        recordedAt: now
-      );
+        await _repo.addTrackPoint(
+          sessionId: _session!.sessionId,
+          latitude: currentPosition.latitude,
+          longitude: currentPosition.longitude,
+          altitude: currentPosition.altitude,
+          recordedAt: now
+        );
+        finalPointFetched = true;
+      } catch (_) {
+        // 終了地点の位置情報が取得できなくても、それまでの記録を失わないよう
+        // 最終ポイントの追加だけをスキップしてそのまま停止処理を続ける
+        finalPointFetched = false;
+      }
     }
 
     // stop the timer
@@ -484,6 +496,7 @@ class TrackingService {
     _timer = null;
 
     // stop recording
+    return finalPointFetched;
   }
 
   // complete session by save/discard

@@ -381,10 +381,16 @@ class _RecordingPageState extends ConsumerState<RecordingPage> {
     if (shouldStop != true) return;
 
     final session = service.recordingSession;
-    await service.stopRecording();
+    final finalPointFetched = await service.stopRecording();
+
+    if (!context.mounted) return;
+    if (finalPointFetched == false) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('終了地点の位置情報が取得できなかったため、直前の記録までを保存しました'))
+      );
+    }
 
     // save / discard dialog
-    if (!context.mounted) return;
     if (session == null) return;
 
     await showSaveOrDiscardDialog(
