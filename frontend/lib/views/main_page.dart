@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../providers/tracking_providers.dart';
+import '../widgets/location_banner_view.dart';
 import 'recording_page.dart';
 import 'saved_sessions.dart';
 import 'analytics_page.dart';
@@ -76,9 +77,16 @@ class _MainPageState extends ConsumerState<MainPage> with WidgetsBindingObserver
     ];
 
     return Scaffold(
-      body: IndexedStack(
-        index: currentIndex,
-        children: pages
+      body: Column(
+        children: [
+          const LocationBannerView(),
+          Expanded(
+            child: IndexedStack(
+              index: currentIndex,
+              children: pages
+            )
+          )
+        ]
       ),
       bottomNavigationBar: NavigationBar(
         selectedIndex: currentIndex,

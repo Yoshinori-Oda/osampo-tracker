@@ -2,8 +2,8 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_map/flutter_map.dart';
 import 'package:latlong2/latlong.dart';
-import '../models/move_method.dart';
 import '../providers/tracking_providers.dart';
+import '../utils/save_or_discard_dialog.dart';
 import '../widgets/compass.dart';
 import 'map_view.dart';
 
@@ -300,85 +300,22 @@ class _RecordingPageState extends ConsumerState<RecordingPage> {
     );
 
     if (shouldStop != true) return;
+
+    final session = service.recordingSession;
     await service.stopRecording();
 
     // save / discard dialog
     if (!context.mounted) return;
+    if (session == null) return;
 
-    final nameController = TextEditingController();
-    MoveMethod selectedMethod = MoveMethod.walk;
-
-    await showDialog<void>(
-      context: context,
-      barrierDismissible: false,
-      builder: (dialogContext) {
-        return StatefulBuilder(
-          builder: (context, setState) {
-            return AlertDialog(
-              title: const Text('セッション保存'),
-              content: Column(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  TextField(
-                    controller: nameController,
-                    decoration: const InputDecoration(
-                      labelText: 'セッション名',
-                      border: OutlineInputBorder()
-                    )
-                  ),
-                  const SizedBox(height: 16),
-                  DropdownButtonFormField<MoveMethod>(
-                    initialValue: selectedMethod,
-                    decoration: const InputDecoration(
-                      labelText: '移動手段',
-                      border: OutlineInputBorder()
-                    ),
-                    items: MoveMethod.values.map((method) {
-                      return DropdownMenuItem(
-                        value: method,
-                        child: Text(method.label)
-                      );
-                    }).toList(),
-                    onChanged: (val) {
-                      if (val != null) setState(() => selectedMethod = val);
-                    }
-                  )
-                ]
-              ),
-              actions: [
-                TextButton(
-                  style: TextButton.styleFrom(foregroundColor: Colors.red),
-                  onPressed: () async {
-                    Navigator.of(dialogContext).pop();
-                    await service.completeSession(doSave: false);
-                  },
-                  child: const Text('破棄')
-                ),
-                ElevatedButton(
-                  onPressed: () async {
-                    Navigator.of(dialogContext).pop();
-
-                    final session = service.recordingSession;
-                    final startTime = session!.startedAt;
-                    final timeStr = '${startTime.month}/${startTime.day} ${startTime.hour}:${startTime.minute.toString().padLeft(2, '0')}:${startTime.second.toString().padLeft(2, '0')}';
-                    final defaultName = '$timeStrの${selectedMethod.label}アクティビティ';
-
-                    final inputName = nameController.text.trim();
-                    final finalSessionName = inputName.isEmpty ? defaultName : inputName;
-
-                    await service.completeSession(
-                      doSave: true,
-                      sessionName: finalSessionName,
-                      moveMethod: selectedMethod
-                    );
-                  },
-                  child: const Text('保存')
-                )
-              ]
-            );
-          }
-        );
-      }
+    await showSaveOrDiscardDialog(
+      sessionStartedAt: session.startedAt,
+      onDiscard: () => service.completeSession(doSave: false),
+      onSave: (sessionName, moveMethod) => service.completeSession(
+        doSave: true,
+        sessionName: sessionName,
+        moveMethod: moveMethod
+      )
     );
   }
 }

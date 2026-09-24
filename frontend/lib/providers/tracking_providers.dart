@@ -4,6 +4,7 @@ import '../database/app_database.dart';
 import '../repositories/tracking_repository.dart';
 import '../services/tracking_service.dart';
 import '../models/recording_session.dart';
+import '../models/location_banner.dart';
 import '../utils/delete_conflict_dialog.dart';
 
 // DB provider
@@ -47,6 +48,12 @@ final isRecordingProvider = StreamProvider<bool>((ref) {
 final recordingSessionProvider = StreamProvider<RecordingSession?>((ref) {
   final service = ref.watch(trackingServiceProvider);
   return service.recordingSessionStream;
+});
+
+// 全タブ共通で表示する位置情報の不具合バナー
+final locationBannerProvider = StreamProvider<LocationBannerState>((ref) {
+  final service = ref.watch(trackingServiceProvider);
+  return service.locationBannerStream;
 });
 
 // for sessions list view
