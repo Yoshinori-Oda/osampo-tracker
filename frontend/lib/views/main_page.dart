@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import '../models/recording_phase.dart';
 import '../providers/tracking_providers.dart';
 import '../widgets/location_banner_view.dart';
 import '../widgets/recording_phase_banner_view.dart';
@@ -50,6 +51,11 @@ class _MainPageState extends ConsumerState<MainPage> with WidgetsBindingObserver
   Widget build(BuildContext context) {
     final currentIndex = ref.watch(bottomNavIndexProvider);
 
+    // バナーが1つも表示されない間はSafeAreaの上部paddingも含めてスペースを確保しない
+    final locationBannerActive = ref.watch(locationBannerProvider).value?.isActive ?? false;
+    final recordingPhase = ref.watch(recordingPhaseProvider).value ?? RecordingPhase.idle;
+    final hasAnyBanner = locationBannerActive || recordingPhase != RecordingPhase.idle;
+
     final pages = [
       const RecordingPage(),
       Navigator(
@@ -80,15 +86,16 @@ class _MainPageState extends ConsumerState<MainPage> with WidgetsBindingObserver
     return Scaffold(
       body: Column(
         children: [
-          SafeArea(
-            bottom: false,
-            child: Column(
-              children: [
-                const RecordingPhaseBannerView(),
-                const LocationBannerView()
-              ]
-            )
-          ),
+          if (hasAnyBanner)
+            SafeArea(
+              bottom: false,
+              child: Column(
+                children: [
+                  const RecordingPhaseBannerView(),
+                  const LocationBannerView()
+                ]
+              )
+            ),
           Expanded(
             child: IndexedStack(
               index: currentIndex,
