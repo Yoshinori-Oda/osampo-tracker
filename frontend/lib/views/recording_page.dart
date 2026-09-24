@@ -2,7 +2,9 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_map/flutter_map.dart';
 import 'package:latlong2/latlong.dart';
+import '../models/recording_phase.dart';
 import '../providers/tracking_providers.dart';
+import '../services/tracking_service.dart' show StartRecordingBlockedException;
 import '../utils/save_or_discard_dialog.dart';
 import '../widgets/compass.dart';
 import 'map_view.dart';
@@ -27,8 +29,10 @@ class _RecordingPageState extends ConsumerState<RecordingPage> {
   Widget build(BuildContext context) {
     final mapState = ref.watch(mapModeProvider);
     final notifier = ref.read(mapModeProvider.notifier);
-    final isRecordingAsync = ref.watch(isRecordingProvider);
-    final isRecording = isRecordingAsync.value ?? false;
+    final phase = ref.watch(recordingPhaseProvider).value ?? RecordingPhase.idle;
+    final isRecording = phase == RecordingPhase.recording;
+    final isStarting = phase == RecordingPhase.starting;
+    final canPress = phase == RecordingPhase.idle || phase == RecordingPhase.recording;
 
     // camera follows current position
     if (mapState.position != null) {
@@ -46,61 +50,136 @@ class _RecordingPageState extends ConsumerState<RecordingPage> {
       });
     }
 
-    return Scaffold(
-      appBar: AppBar(
-        title: SegmentedButton<RecordingPageMode>(
-          segments: const [
-            ButtonSegment(
-              value: RecordingPageMode.statistics,
-              label: Text('セッション情報')
-            ),
-            ButtonSegment(
-              value: RecordingPageMode.map,
-              label: Text('マップ操作')
-            )
-          ],
-          selected: {mapState.pageMode},
-          onSelectionChanged: (Set<RecordingPageMode> newSelection) {
-            notifier.setRecordingPageMode(newSelection.first);
-          }
-        )
-      ),
-      body: IndexedStack(
-        index: mapState.pageMode.index,
-        children: [
-          _buildStatisticsTabView(context, ref, mapState),
-          const MapControlTabView()
-        ]
-      ),
-      bottomNavigationBar: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
-        color: Theme.of(context).colorScheme.surface,
-        child: SafeArea(
-          child: ElevatedButton(
-            style: ElevatedButton.styleFrom(
-              backgroundColor: isRecording ? Colors.red : Colors.blue,
-              foregroundColor: Colors.white,
-              padding: const EdgeInsets.symmetric(vertical: 14),
-              shape:RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(30)
+    return Stack(
+      children: [
+        AbsorbPointer(
+          absorbing: isStarting,
+          child: Scaffold(
+            appBar: AppBar(
+              title: SegmentedButton<RecordingPageMode>(
+                segments: const [
+                  ButtonSegment(
+                    value: RecordingPageMode.statistics,
+                    label: Text('セッション情報')
+                  ),
+                  ButtonSegment(
+                    value: RecordingPageMode.map,
+                    label: Text('マップ操作')
+                  )
+                ],
+                selected: {mapState.pageMode},
+                onSelectionChanged: (Set<RecordingPageMode> newSelection) {
+                  notifier.setRecordingPageMode(newSelection.first);
+                }
               )
             ),
-            onPressed: () async {
-              final service = ref.read(trackingServiceProvider);
-              if (!isRecording) {
-                await service.startRecording();
-              } else {
-                _showStopRecordingDialog(context, ref);
-              }
-            },
-            child: Text(
-              isRecording ? '収録終了 (STOP)' : '収録開始 (REC)',
-              style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold)
+            body: IndexedStack(
+              index: mapState.pageMode.index,
+              children: [
+                _buildStatisticsTabView(context, ref, mapState),
+                const MapControlTabView()
+              ]
+            ),
+            bottomNavigationBar: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
+              color: Theme.of(context).colorScheme.surface,
+              child: SafeArea(
+                child: ElevatedButton(
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: isRecording ? Colors.red : Colors.blue,
+                    foregroundColor: Colors.white,
+                    padding: const EdgeInsets.symmetric(vertical: 14),
+                    shape:RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(30)
+                    )
+                  ),
+                  onPressed: canPress
+                    ? () async {
+                        if (!isRecording) {
+                          await _handleStartPressed(context, ref);
+                        } else {
+                          _showStopRecordingDialog(context, ref);
+                        }
+                      }
+                    : null,
+                  child: Text(
+                    isRecording ? '収録終了 (STOP)' : '収録開始 (REC)',
+                    style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold)
+                  )
+                )
+              )
             )
+          )
+        ),
+        if (isStarting) _buildStartingOverlay(context, ref)
+      ]
+    );
+  }
+
+  // 現在地取得中(startRecordingのローディング)のオーバーレイ。収録タブの操作を無効化する
+  Widget _buildStartingOverlay(BuildContext context, WidgetRef ref) {
+    return Positioned.fill(
+      child: Container(
+        color: Colors.black.withValues(alpha: 0.5),
+        child: Center(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const CircularProgressIndicator(color: Colors.white),
+              const SizedBox(height: 16),
+              const Text('現在地を取得しています…', style: TextStyle(color: Colors.white)),
+              const SizedBox(height: 24),
+              OutlinedButton(
+                style: OutlinedButton.styleFrom(
+                  foregroundColor: Colors.white,
+                  side: const BorderSide(color: Colors.white)
+                ),
+                onPressed: () => ref.read(trackingServiceProvider).cancelStarting(),
+                child: const Text('キャンセル')
+              )
+            ]
           )
         )
       )
     );
+  }
+
+  // 収録開始ボタン押下時の処理。位置情報が取れずブロックされた場合は再試行できるダイアログを出す
+  Future<void> _handleStartPressed(BuildContext context, WidgetRef ref) async {
+    final service = ref.read(trackingServiceProvider);
+    try {
+      await service.startRecording();
+    } on StartRecordingBlockedException {
+      if (!context.mounted) return;
+      final retry = await showDialog<bool>(
+        context: context,
+        barrierDismissible: false,
+        builder: (dialogContext) {
+          return AlertDialog(
+            title: const Text('収録を開始できません'),
+            content: const Text('現在地を取得できませんでした。電波状況の良い場所で再試行してください。'),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.of(dialogContext).pop(false),
+                child: const Text('閉じる')
+              ),
+              ElevatedButton(
+                onPressed: () => Navigator.of(dialogContext).pop(true),
+                child: const Text('再試行')
+              )
+            ]
+          );
+        }
+      );
+      if (retry == true && context.mounted) {
+        await _handleStartPressed(context, ref);
+      }
+    } catch (e) {
+      if (!context.mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('収録を開始できませんでした: $e'))
+      );
+    }
   }
 
   // session statistics tab

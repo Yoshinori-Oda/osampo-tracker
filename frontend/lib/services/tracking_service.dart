@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:math';
+import 'package:flutter/material.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:uuid/uuid.dart';
 import '../database/app_database.dart';
@@ -7,10 +8,18 @@ import '../repositories/tracking_repository.dart';
 import '../models/recording_session.dart';
 import '../models/move_method.dart';
 import '../models/location_banner.dart';
+import '../models/recording_phase.dart';
 import '../utils/save_or_discard_dialog.dart';
+import '../utils/delete_conflict_dialog.dart' show navigatorKey;
+import '../utils/duration_format.dart';
 
 // 端末/アプリ側の設定が原因で位置情報が取れなくなっている状態
 enum _LocationPermissionTrouble { none, serviceDisabled, permissionDenied }
+
+// 新鮮な位置情報が取れず、フォールバック候補も古すぎる/存在しないため開始できない
+class StartRecordingBlockedException implements Exception {
+  const StartRecordingBlockedException();
+}
 
 class TrackingService {
   // singleton services
@@ -23,9 +32,14 @@ class TrackingService {
   static const Duration _staleThreshold = Duration(seconds: 10);
   static const int _accuracyTroubleIncrement = 3;
   static const int _accuracyTroubleMax = 9;
+  // startRecording: 新鮮な位置情報取得のtimeout
+  static const Duration _startFreshPositionTimeout = Duration(seconds: 5);
+  // startRecording: この時間を超えて古い位置情報はフォールバックとして使わずブロックする
+  static const Duration _startFallbackAgeLimit = Duration(seconds: 15);
 
   StreamSubscription<Position>? _positionStreamSubscription;
   Position? _lastPosition;
+  Position? _lastReceivedPosition;
 
   RecordingSession? _session;
   Timer? _timer;
@@ -35,14 +49,17 @@ class TrackingService {
   int _accuracyTroubleCount = 0;
   _LocationPermissionTrouble _permissionTrouble = _LocationPermissionTrouble.none;
 
+  RecordingPhase _phase = RecordingPhase.idle;
+  bool _startCancelled = false;
+
   // controllers to watch states (for Riverpod / UI)
-  final _isRecordingController = StreamController<bool>.broadcast();
+  final _recordingPhaseController = StreamController<RecordingPhase>.broadcast();
   final _currentPositionController = StreamController<Position>.broadcast();
   final _recordingSessionController = StreamController<RecordingSession?>.broadcast();
   final _locationBannerController = StreamController<LocationBannerState>.broadcast();
 
   // exported streams
-  Stream<bool> get isRecordingStream => _isRecordingController.stream;
+  Stream<RecordingPhase> get recordingPhaseStream => _recordingPhaseController.stream;
   Stream<Position> get currentPositionStream => _currentPositionController.stream;
   Stream<RecordingSession?> get recordingSessionStream => _recordingSessionController.stream;
   Stream<LocationBannerState> get locationBannerStream => _locationBannerController.stream;
@@ -51,6 +68,7 @@ class TrackingService {
   DateTime? get lastGoodPositionAt => _lastGoodPositionAt;
 
   // getters
+  RecordingPhase get phase => _phase;
   bool get isRecording => _session != null;
   RecordingSession? get recordingSession => _session;
   String? get currentSessionId => _session?.sessionId;
@@ -58,6 +76,11 @@ class TrackingService {
   double? get maxAltitude => _session?.maxAltitude;
   double? get minAltitude => _session?.minAltitude;
   double? get avgSpeed => _session?.avgSpeed;
+
+  void _setPhase(RecordingPhase phase) {
+    _phase = phase;
+    _recordingPhaseController.add(phase);
+  }
 
   TrackingService(this._repo) {
     _initTrackingStream();
@@ -129,6 +152,7 @@ class TrackingService {
   // 位置情報を(精度に関わらず)受信した際の共通処理
   void _onPositionReceived(Position position) {
     _currentPositionController.add(position);
+    _lastReceivedPosition = position;
 
     final wasStale = _lastGoodPositionAt == null ||
       DateTime.now().difference(_lastGoodPositionAt!) >= _staleThreshold;
@@ -219,19 +243,112 @@ class TrackingService {
 
   // start recording
   Future<void> startRecording() async {
-    if (isRecording) return;
+    if (_phase != RecordingPhase.idle) return;
+
+    _startCancelled = false;
+    _setPhase(RecordingPhase.starting);
 
     final hasPermission = await checkAndRequestPermission();
+    if (_startCancelled) {
+      _setPhase(RecordingPhase.idle);
+      return;
+    }
     if (!hasPermission) {
+      _setPhase(RecordingPhase.idle);
       throw Exception('位置情報の利用権限が許可されていません。');
     }
 
-    // reflesh _last/current position as initial position
-    final currentPosition = await Geolocator.getCurrentPosition(
-      locationSettings: const LocationSettings(accuracy: LocationAccuracy.high)
+    Position? startPosition;
+    try {
+      startPosition = await Geolocator.getCurrentPosition(
+        locationSettings: const LocationSettings(
+          accuracy: LocationAccuracy.high,
+          timeLimit: _startFreshPositionTimeout
+        )
+      );
+      _onPositionReceived(startPosition);
+    } catch (_) {
+      startPosition = null;
+    }
+
+    if (_startCancelled) {
+      _setPhase(RecordingPhase.idle);
+      return;
+    }
+
+    if (startPosition == null) {
+      startPosition = await _resolveFallbackStartPosition();
+      if (startPosition == null) {
+        _setPhase(RecordingPhase.idle);
+        return;
+      }
+    }
+
+    await _beginSession(startPosition);
+    _setPhase(RecordingPhase.recording);
+  }
+
+  // ユーザーによる開始処理のキャンセル(ローディング中のみ有効)
+  void cancelStarting() {
+    if (_phase == RecordingPhase.starting) {
+      _startCancelled = true;
+    }
+  }
+
+  // 新鮮な位置情報が取れなかった場合のフォールバック判定。
+  // 15秒以内ならこのセッション内で最後に確認できた位置から開始するか確認ダイアログを出し、
+  // それより古い/一度も取得できていない場合は開始をブロックする(例外を投げる)。
+  Future<Position?> _resolveFallbackStartPosition() async {
+    final lastGoodAt = _lastGoodPositionAt;
+    final lastPosition = _lastReceivedPosition;
+
+    if (lastGoodAt == null || lastPosition == null) {
+      _setPhase(RecordingPhase.idle);
+      throw const StartRecordingBlockedException();
+    }
+
+    final age = DateTime.now().difference(lastGoodAt);
+    if (age >= _startFallbackAgeLimit) {
+      _setPhase(RecordingPhase.idle);
+      throw const StartRecordingBlockedException();
+    }
+
+    final confirmed = await _confirmStartFromLastPosition(lastGoodAt, age);
+    if (_startCancelled || confirmed != true) {
+      return null;
+    }
+    return lastPosition;
+  }
+
+  Future<bool?> _confirmStartFromLastPosition(DateTime lastGoodAt, Duration age) async {
+    final context = navigatorKey.currentContext;
+    if (context == null) return false;
+
+    return showDialog<bool>(
+      context: context,
+      barrierDismissible: false,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('現在地を取得できませんでした'),
+        content: Text(
+          '最後に確認できた位置情報を使って収録を開始しますか?\n\n'
+          '${formatTimeOfDayJa(lastGoodAt)}(${formatElapsedJa(age)})の位置情報です。'
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(dialogContext).pop(false),
+            child: const Text('キャンセル')
+          ),
+          ElevatedButton(
+            onPressed: () => Navigator.of(dialogContext).pop(true),
+            child: const Text('この地点から開始')
+          )
+        ]
+      )
     );
-    _currentPositionController.add(currentPosition);
-    _lastPosition = currentPosition;
+  }
+
+  Future<void> _beginSession(Position startPosition) async {
+    _lastPosition = startPosition;
 
     final now = DateTime.now();
 
@@ -243,8 +360,8 @@ class TrackingService {
       totalDistance: 0.0,
       elapsedSeconds: 0,
       elevationGain: 0.0,
-      maxAltitude: currentPosition.altitude,
-      minAltitude: currentPosition.altitude
+      maxAltitude: startPosition.altitude,
+      minAltitude: startPosition.altitude
     );
 
     // writing into DB
@@ -252,16 +369,16 @@ class TrackingService {
       session: _session!,
     );
     // save current position as initial point of session
+    // (recordedAtは押下時刻ではなく、その位置情報が実際に取得された時刻を使う)
     await _repo.addTrackPoint(
       sessionId: _session!.sessionId,
-      latitude: currentPosition.latitude,
-      longitude: currentPosition.longitude,
-      altitude: currentPosition.altitude,
-      recordedAt: now
+      latitude: startPosition.latitude,
+      longitude: startPosition.longitude,
+      altitude: startPosition.altitude,
+      recordedAt: startPosition.timestamp
     );
 
     // initialize tracking-state for UI
-    _isRecordingController.add(isRecording);
     _recordingSessionController.add(recordingSession!);
 
     // start the timer
@@ -339,6 +456,7 @@ class TrackingService {
   // stop recording
   Future<void> stopRecording({bool skipFinalPositionFetch = false}) async {
     if (!isRecording) return;
+    _setPhase(RecordingPhase.stopping);
 
     // end session
     final now = DateTime.now();
@@ -390,7 +508,7 @@ class TrackingService {
 
     // reset recording states
     _session = null;
-    _isRecordingController.add(isRecording);
+    _setPhase(RecordingPhase.idle);
     _recordingSessionController.add(recordingSession);
   }
 
@@ -421,7 +539,7 @@ class TrackingService {
     _positionStreamSubscription?.cancel();
     _timer?.cancel();
     _bannerWatchdogTimer?.cancel();
-    _isRecordingController.close();
+    _recordingPhaseController.close();
     _currentPositionController.close();
     _recordingSessionController.close();
     _locationBannerController.close();

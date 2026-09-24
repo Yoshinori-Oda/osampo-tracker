@@ -5,6 +5,7 @@ import '../repositories/tracking_repository.dart';
 import '../services/tracking_service.dart';
 import '../models/recording_session.dart';
 import '../models/location_banner.dart';
+import '../models/recording_phase.dart';
 import '../utils/delete_conflict_dialog.dart';
 
 // DB provider
@@ -40,9 +41,9 @@ final currentPositionProvider = StreamProvider<Position>((ref) {
   return service.currentPositionStream;
 });
 
-final isRecordingProvider = StreamProvider<bool>((ref) {
+final recordingPhaseProvider = StreamProvider<RecordingPhase>((ref) {
   final service = ref.watch(trackingServiceProvider);
-  return service.isRecordingStream;
+  return service.recordingPhaseStream;
 });
 
 final recordingSessionProvider = StreamProvider<RecordingSession?>((ref) {
