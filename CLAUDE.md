@@ -27,13 +27,23 @@ Claude Code がこのプロジェクトで作業する際のコンテキスト�
         - lib: モバイルアプリ開発用ディレクトリ
             - database/: Drift定義(ローカルSQLite)
             - repositories/: リモート同期ロジック(push/pull/競合解決)
-            - services/: 位置情報トラッキングのドメインロジック
-            - providers/: Riverpodのprovider定義
+            - services/: 位置情報トラッキングのドメインロジック(tracking_service.dart。
+              位置情報監視・収録の状態管理の中心。詳細は「位置情報取得の堅牢性設計」参照)
+            - models/: RecordingSession/Status/MoveMethodに加え、RecordingPhase
+              (収録の状態遷移)、LocationBannerState/LocationBannerKind
+              (位置情報バナーの状態)を持つ
+            - providers/: Riverpodのprovider定義(recordingPhaseProvider/
+              locationBannerProviderなど)
             - views/: 画面(例: saved_sessions.dartは保存済みセッション一覧。編集モード中に
               ListTileをタップすると名前・移動手段を編集するダイアログを表示する。名前欄は
               空欄でsubmitされた場合は変更しない。移動手段は`DropdownButtonFormField<MoveMethod>`
-              で選択する)
-            - utils/: navigatorKeyやダイアログ等、UI外から呼ぶための小物
+              で選択する。gps_help_page.dartはGPSを掴みやすくするためのTipsページ)
+            - widgets/: 全タブ共通で表示するバナー(location_banner_view.dart/
+              recording_phase_banner_view.dart)や、そこから使うgps_help_link.dartなど
+            - utils/: navigatorKeyやダイアログ等、UI外から呼ぶための小物。
+              save_or_discard_dialog.dartは収録停止後の保存/破棄ダイアログで、
+              通常の停止フローと権限エラーによる強制停止フローの両方から使う共通部品。
+              duration_format.dartは経過時間/時刻表示の共通フォーマッタ
         - Android: アンドロイド端末設定用ディレクトリ
         - iOS: iOS端末設定用ディレクトリ
 
@@ -58,6 +68,55 @@ pull型差分同期(`updated_at`ベース)を採用している。設計の要�
   アプリ起動時・フォアグラウンド復帰時(`WidgetsBindingObserver`)にも呼んでいる。
 - 本格的なリアルタイムpush(サーバー起動のpush通知等)は、複数端末同時操作を想定しない
   今回の規模では投資対効果が薄いと判断し採用していない。
+
+## 位置情報取得の堅牢性設計 (重要)
+
+GPSが未確定/不正確な状態(アプリ起動直後・屋内・電波不良など)でも収録が壊れないよう、
+`TrackingService`に位置情報監視の状態管理を持たせている。設計の要点:
+
+- **収録の状態は`RecordingPhase`(idle/starting/recording/stopping)で管理する**。
+  `startRecording()`はidleの時のみ受け付け、`starting`中は連打による二重start
+  (レースコンディション)を防ぐガードになる。`recording_page.dart`は`starting`中、
+  収録タブ全体を`AbsorbPointer`+オーバーレイでinactive化し、キャンセルボタンも出す。
+- **`Geolocator.getCurrentPosition`は必ず`LocationSettings(timeLimit: ...)`を設定して
+  呼ぶこと**(標準パラメータの`timeLimit`はdeprecated。`LocationSettings`経由で渡す)。
+  無期限に待つと、GPS未確定のままハングし続ける。呼び出し箇所ごとにtimeLimitを変えている:
+  `_initTrackingStream`の初回取得とstopRecordingは1秒、startRecordingは5秒
+  (ストリームが既に動いていれば大抵は温まっているが、アプリ起動直後にすぐRECを
+  押すケースは温まっていないため長めに取っている)。
+- **`_lastGoodPositionAt`(DateTime?)が位置情報監視の中心的な状態**。精度に関わらず
+  位置を受信するたびに更新し、これを起点に「未取得(null)」「更新停止(10秒以上経過)」
+  を判定してバナー(`LocationBannerView`)に表示する。精度(accuracy>50m)は別軸の
+  ヒステリシス付きカウンタ(+3/-1、無更新中は凍結、長時間の停止から復帰した際は
+  クリーンに0リセット)で管理する。バナーの優先順位は権限エラー > 未取得/タイムアウト
+  > 精度低下(1つだけ表示)。
+- **`startRecording()`はOSの位置情報キャッシュ(`getLastKnownPosition()`)を使わない**。
+  新鮮な位置が取れなければ、このセッション内で最後に確認できた位置
+  (`_lastGoodPositionAt`が15秒以内)のみをフォールバック候補にし、確認ダイアログで
+  開始可否を聞く。15秒を超える/一度も取得できていない場合は
+  `StartRecordingBlockedException`を投げて開始をブロックする(再試行ボタン付きの
+  エラーダイアログを表示)。「セッションとして意味のあるデータかどうか」を基準に
+  しており、別セッション/別文脈の可能性があるOSキャッシュは意図的に除外している。
+- **収録開始時のtrackpointの`recordedAt`は押下時刻ではなく`Position.timestamp`
+  (実際にその位置情報が取得された時刻)を使う**。フォールバック開始時は数秒〜15秒
+  古い時刻になり得るが、意図した挙動。
+- **`stopRecording()`の終了地点取得もtimeLimit 1秒**。失敗した場合は最終ポイントの
+  追加だけをスキップしてそのまま保存し、スナックバーで通知する。戻り値は`bool?`
+  (null=取得を試みなかった、true=取得できた、false=取得を試みたが失敗した)。
+- **収録中に位置情報の権限/サービスが失われた場合**(`getPositionStream`の`onError`で
+  検知)、`_forceStopForPermissionTrouble()`が`stopRecording(skipFinalPositionFetch: true)`
+  を呼んで強制停止し、`utils/save_or_discard_dialog.dart`の`showSaveOrDiscardDialog()`
+  (通常の停止フローと共通化済み)を`navigatorKey`経由で呼び出して保存/破棄を確認する。
+- **収録状態バナーと位置情報バナーは全タブ共通で`main_page.dart`の`body`上部に表示する**。
+  どちらも非アクティブ時は`SizedBox.shrink()`で高さ0にする設計だが、それを包む
+  padding/`SafeArea`は「バナーが1つもない時は一切描画しない」ようにしないと、
+  ステータスバー避けの空白だけが常時残ってしまう。逆にバナー表示中は、タブ側
+  (各`AppBar`)が自前でも同じ分のステータスバー避けpaddingを確保してしまい二重の
+  空白になるため、`MediaQuery.removePadding(removeTop: hasAnyBanner)`でタブ側の
+  重複分を明示的に消費している(詳細は`main_page.dart`参照)。
+- GPSを掴みやすくするTipsは`views/gps_help_page.dart`にまとめ、「未取得/更新停止」の
+  位置情報バナーと`startRecording`のブロックダイアログの両方から
+  `widgets/gps_help_link.dart`経由でリンクしている。
 
 ## 開発ルール
 
@@ -129,6 +188,13 @@ pull型差分同期(`updated_at`ベース)を採用している。設計の要�
   幅・高さが0になり、`CameraFit.bounds`のズーム計算が`Infinity`になって上記と
   同様のグレー画面バグを再現するため、`CameraFit.bounds`には`maxZoom`を
   設定してこの退化ケースを防ぐこと
+- 画面上部に条件付きで出し入れするバナー(`main_page.dart`の収録状態/位置情報バナー等)を
+  `SafeArea`で包む場合、`SafeArea`の`removeTop`は自分の子孫にしか伝播しない。
+  バナーと兄弟関係にある別のWidget(タブ内の`AppBar`など)は、自分では
+  まだステータスバー分のpaddingが消費されていないと判断して自前でも
+  同じ分のpaddingを確保してしまい、バナー表示中だけ上部に二重の空白ができる。
+  複数箇所で同じトップインセットを扱う場合は、`MediaQuery.removePadding`で
+  明示的にどこまで消費済みにするかを揃えること
 
 ## デバッグ Tips
 
