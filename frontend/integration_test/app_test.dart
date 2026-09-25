@@ -40,6 +40,23 @@ Future<void> _seedOrphanedSession(
   }
 }
 
+// テストが保存/破棄どちらに転んでも(アサーション失敗で走らなかった場合も含めて)、
+// 実機の本物のDBにテスト用セッションを残さないための後始末
+Future<void> _purgeSeededSession(AppDatabase db, String sessionId, DateTime startedAt) {
+  return db.deleteRecordingSession(
+    session: RecordingSession(
+      sessionId: sessionId,
+      startedAt: startedAt,
+      endedAt: null,
+      totalDistance: 0,
+      elapsedSeconds: 0,
+      elevationGain: 0,
+      maxAltitude: 0,
+      minAltitude: 0
+    )
+  );
+}
+
 void main() {
   final binding = IntegrationTestWidgetsFlutterBinding.ensureInitialized();
 
@@ -63,6 +80,7 @@ void main() {
     final startedAt = DateTime.now().subtract(const Duration(minutes: 10));
 
     final db = AppDatabase();
+    addTearDown(() => _purgeSeededSession(db, sessionId, startedAt));
     await _seedOrphanedSession(db, sessionId: sessionId, startedAt: startedAt);
 
     await tester.pumpWidget(
@@ -108,6 +126,8 @@ void main() {
     final startedAt2 = DateTime.now().subtract(const Duration(minutes: 20));
 
     final db = AppDatabase();
+    addTearDown(() => _purgeSeededSession(db, sessionId1, startedAt1));
+    addTearDown(() => _purgeSeededSession(db, sessionId2, startedAt2));
     await _seedOrphanedSession(db, sessionId: sessionId1, startedAt: startedAt1);
     await _seedOrphanedSession(db, sessionId: sessionId2, startedAt: startedAt2);
 
@@ -145,6 +165,7 @@ void main() {
     final startedAt = DateTime.now().subtract(const Duration(minutes: 5));
 
     final db = AppDatabase();
+    addTearDown(() => _purgeSeededSession(db, sessionId, startedAt));
     await _seedOrphanedSession(db, sessionId: sessionId, startedAt: startedAt, trackPointCount: 0);
 
     await tester.pumpWidget(
