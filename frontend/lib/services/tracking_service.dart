@@ -202,6 +202,15 @@ class TrackingService {
 
     if (trouble == _LocationPermissionTrouble.none) {
       await _startPositionStream();
+      return;
+    }
+
+    // 設定アプリでの操作はストリームのonErrorを発火させないため、収録中の強制停止も
+    // ここで明示的にトリガーする(onError経由の_handleLocationStreamErrorと同じ扱い)。
+    // stopping中(保存/破棄待ち)にフォアグラウンド復帰を繰り返しても再度停止処理が
+    // 走らないよう、実際に収録中(recording)の場合のみ発火させる
+    if (_phase == RecordingPhase.recording) {
+      await _forceStopForPermissionTrouble();
     }
   }
 
