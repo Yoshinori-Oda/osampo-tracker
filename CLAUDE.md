@@ -46,6 +46,10 @@ Claude Code がこのプロジェクトで作業する際のコンテキスト�
               duration_format.dartは経過時間/時刻表示の共通フォーマッタ
         - Android: アンドロイド端末設定用ディレクトリ
         - iOS: iOS端末設定用ディレクトリ
+        - integration_test/: `flutter drive`によるE2Eシナリオ(スクリーンショット取得含む)。
+          詳細は「テスト」セクション参照
+        - test_driver/: integration_test.dart(`flutter drive`実行時のドライバスクリプト。
+          スクリーンショットをホストのファイルとして保存する役割)
 
 ## 同期・削除の設計 (重要)
 
@@ -125,7 +129,33 @@ GPSが未確定/不正確な状態(アプリ起動直後・屋内・電波不良
 - Dartのインデントは2文字、SQLのインデントは4文字で行い、Dartではリスト項目の末尾にも`,`を入れる
 
 ### テスト
-- 現時点ではテスト用のフレームワーク等は未導入
+- ユニットテストのフレームワーク等は未導入
+- E2E/画面確認は`integration_test`パッケージ + `flutter drive`で行う。Claude Code は
+  コンテナ内で動くためシミュレータ/実機を直接操作できず(`flutter devices`でも
+  Linux desktopしか見えない)、次の役割分担で運用する:
+  - ユーザー: ホスト側で`flutter drive`を実行してテストシナリオを走らせる(実行と
+    完了報告のみ担当)
+  - Claude: シナリオ(`integration_test/*.dart`)のコード自体は書く。実行後は
+    `frontend/integration_test_screenshots/`配下に保存されたスクリーンショットPNGを
+    Readツールで開いて解析する(このディレクトリは`/workspace`にbind mountされて
+    いるため、ホストで生成したファイルがそのままコンテナから見える)
+  - `test_driver/integration_test.dart`が`onScreenshot`コールバックでPNGを
+    `integration_test_screenshots/<name>.png`に書き出す。シナリオ側は
+    `IntegrationTestWidgetsFlutterBinding.convertFlutterSurfaceToImage()`→
+    `takeScreenshot('name')`の順で呼ぶ(Android実機/エミュレータでは
+    `convertFlutterSurfaceToImage`が必須。iOSでは無視されるが呼んでおいて問題ない)
+  - `integration_test_screenshots/`は毎回上書きされる一時成果物なので`.gitignore`
+    済み、コミット対象にしない
+  - **`pumpAndSettle()`は`flutter_map`のタイル読み込み(ネットワーク経由)の完了を待たない**
+    (アニメーション/再描画フレームが収まるのを待つだけで、任意のFuture/HTTP完了は
+    対象外のため)。地図が写るシーンでスクリーンショットを撮る前は、`pumpAndSettle()`に
+    加えて`tester.pump(const Duration(seconds: 3))`等の実時間待機を挟むこと(実例:
+    `integration_test/app_test.dart`)。挟まずに撮ると、タイルが揃う前の一部グレーの
+    地図が写り込む
+  - 上記の実時間待機を挟むと、`flutter drive`実行時に
+    `VMServiceFlutterDriver: request_data message is taking a long time to complete...`
+    という警告が出ることがあるが、これは想定通りの待機時間に対する定型の進捗ログであり、
+    テスト失敗ではないので無視してよい
 
 ### git
 - commitメッセージはconventionalルールを継承する
@@ -213,6 +243,12 @@ dart run build_runner build
 
 # 静的解析
 flutter analyze
+
+# E2Eテスト実行(ホスト側でシミュレータ/実機起動後に実行。frontendディレクトリで実行)
+flutter drive \
+  --driver=test_driver/integration_test.dart \
+  --target=integration_test/app_test.dart \
+  -d <device_id>
 
 # backend起動(backendディレクトリで実行)
 docker compose up -d
