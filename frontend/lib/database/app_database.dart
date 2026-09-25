@@ -230,6 +230,14 @@ class AppDatabase extends _$AppDatabase {
     );
   }
 
+  // クラッシュ・強制終了等で保存/破棄されないまま残ったセッション(起動時リカバリ用)
+  Future<List<Session>> getInProgressSessions() {
+    return (select(sessions)
+        ..where((tbl) => tbl.status.equals(Status.inProgress.index))
+        ..orderBy([(tbl) => OrderingTerm.asc(tbl.startedAt)]))
+      .get();
+  }
+
   Future<List<TrackPoint>> getTrackPointsForSession(String sessionId) {
     return (select(trackPoints)
         ..where((tbl) => tbl.sessionId.equals(sessionId))

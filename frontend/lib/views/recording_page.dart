@@ -33,7 +33,10 @@ class _RecordingPageState extends ConsumerState<RecordingPage> {
     final phase = ref.watch(recordingPhaseProvider).value ?? RecordingPhase.idle;
     final isRecording = phase == RecordingPhase.recording;
     final isStarting = phase == RecordingPhase.starting;
-    final canPress = phase == RecordingPhase.idle || phase == RecordingPhase.recording;
+    final isStopping = phase == RecordingPhase.stopping;
+    final canPress = phase == RecordingPhase.idle
+      || phase == RecordingPhase.recording
+      || phase == RecordingPhase.stopping;
 
     // camera follows current position
     if (mapState.position != null) {
@@ -87,7 +90,9 @@ class _RecordingPageState extends ConsumerState<RecordingPage> {
               child: SafeArea(
                 child: ElevatedButton(
                   style: ElevatedButton.styleFrom(
-                    backgroundColor: isRecording ? Colors.red : Colors.blue,
+                    backgroundColor: isRecording
+                      ? Colors.red
+                      : (isStopping ? Colors.orange : Colors.blue),
                     foregroundColor: Colors.white,
                     padding: const EdgeInsets.symmetric(vertical: 14),
                     shape:RoundedRectangleBorder(
@@ -96,7 +101,9 @@ class _RecordingPageState extends ConsumerState<RecordingPage> {
                   ),
                   onPressed: canPress
                     ? () async {
-                        if (!isRecording) {
+                        if (isStopping) {
+                          await ref.read(trackingServiceProvider).resumePendingCompletion();
+                        } else if (!isRecording) {
                           await _handleStartPressed(context, ref);
                         } else {
                           _showStopRecordingDialog(context, ref);
@@ -104,7 +111,9 @@ class _RecordingPageState extends ConsumerState<RecordingPage> {
                       }
                     : null,
                   child: Text(
-                    isRecording ? '収録終了 (STOP)' : '収録開始 (REC)',
+                    isStopping
+                      ? '前回のセッションを処理'
+                      : (isRecording ? '収録終了 (STOP)' : '収録開始 (REC)'),
                     style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold)
                   )
                 )

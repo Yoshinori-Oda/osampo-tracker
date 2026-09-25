@@ -10,7 +10,7 @@ import '../models/move_method.dart';
 import '../models/location_banner.dart';
 import '../models/recording_phase.dart';
 import '../utils/save_or_discard_dialog.dart';
-import '../utils/delete_conflict_dialog.dart' show navigatorKey;
+import '../utils/delete_conflict_dialog.dart' show navigatorKey, scaffoldMessengerKey;
 import '../utils/duration_format.dart';
 
 // 端末/アプリ側の設定が原因で位置情報が取れなくなっている状態
@@ -44,6 +44,16 @@ class TrackingService {
   RecordingSession? _session;
   Timer? _timer;
   Timer? _bannerWatchdogTimer;
+
+  // 起動時リカバリで見つかった、まだ保存/破棄していないセッションのキュー(先頭から順に_sessionへ積む)
+  final List<RecordingSession> _recoveryQueue = [];
+  // stopping中に表示するダイアログの説明文(強制停止/リカバリの理由。通常の停止では null)
+  String? _pendingCompletionInfoMessage;
+
+  // 収録タブのボトムナビゲーションindex。タブに関わらず即座に処理できる場合はここで判定する
+  static const int _recordingTabIndex = 0;
+  final int Function() _getCurrentTabIndex;
+  final void Function() _switchToRecordingTab;
 
   DateTime? _lastGoodPositionAt;
   int _accuracyTroubleCount = 0;
@@ -82,7 +92,12 @@ class TrackingService {
     _recordingPhaseController.add(phase);
   }
 
-  TrackingService(this._repo) {
+  TrackingService(
+    this._repo, {
+    required int Function() getCurrentTabIndex,
+    required void Function() switchToRecordingTab
+  }) : _getCurrentTabIndex = getCurrentTabIndex,
+       _switchToRecordingTab = switchToRecordingTab {
     _initTrackingStream();
   }
 
@@ -229,9 +244,36 @@ class TrackingService {
     // 位置情報が失われている最中なので、最終ポイント取得は試みずそのまま終了する
     await stopRecording(skipFinalPositionFetch: true);
 
+    _pendingCompletionInfoMessage = '位置情報の利用が失われたため、収録を停止しました。';
+    await _presentPendingCompletion();
+  }
+
+  // stoppingに入った(=保存/破棄が必要になった)瞬間に呼ぶ。収録タブを見ていれば直接ダイアログ、
+  // そうでなければSnackBarで気づかせてから収録タブへ誘導する(タップで resumePendingCompletion)
+  Future<void> _presentPendingCompletion() async {
+    if (_getCurrentTabIndex() == _recordingTabIndex) {
+      await _showPendingCompletionDialog();
+      return;
+    }
+
+    scaffoldMessengerKey.currentState?.showSnackBar(
+      SnackBar(
+        content: const Text('保存/破棄が必要なセッションがあります'),
+        action: SnackBarAction(
+          label: '収録画面へ',
+          onPressed: () => resumePendingCompletion()
+        )
+      )
+    );
+  }
+
+  Future<void> _showPendingCompletionDialog() async {
+    final session = _session;
+    if (session == null) return;
+
     await showSaveOrDiscardDialog(
       sessionStartedAt: session.startedAt,
-      infoMessage: '位置情報の利用が失われたため、収録を停止しました。',
+      infoMessage: _pendingCompletionInfoMessage,
       onDiscard: () => completeSession(doSave: false),
       onSave: (sessionName, moveMethod) => completeSession(
         doSave: true,
@@ -239,6 +281,104 @@ class TrackingService {
         moveMethod: moveMethod
       )
     );
+  }
+
+  // バナー/収録タブのボタンから、保留中セッションの保存/破棄ダイアログを再度呼び出す
+  Future<void> resumePendingCompletion() async {
+    if (_phase != RecordingPhase.stopping || _session == null) return;
+
+    if (_getCurrentTabIndex() != _recordingTabIndex) {
+      _switchToRecordingTab();
+    }
+    await _showPendingCompletionDialog();
+  }
+
+  // 起動時に一度呼び、クラッシュ・強制終了等で保存/破棄されないまま残ったセッションを検出する。
+  // 複数件見つかった場合は全件をキューに積み、1件ずつ保存/破棄させる(「複数端末同時操作なし」
+  // の前提上、通常は起きないはずだが、内部DBを直接書き換えない限り復旧できないため備えておく)
+  Future<void> recoverOrphanedSessions() async {
+    if (isRecording) return;
+
+    final orphanedSessions = await _repo.getInProgressSessions();
+    if (orphanedSessions.isEmpty) return;
+
+    for (final session in orphanedSessions) {
+      final trackPoints = await _repo.getTrackPointsForSession(session.id);
+      if (trackPoints.isEmpty) {
+        // 最初のtrackpoint書き込み前に失われたセッションは保存しようがないため破棄する
+        await _repo.deleteRecordingSession(
+          session: RecordingSession(
+            sessionId: session.id,
+            startedAt: session.startedAt,
+            endedAt: session.startedAt,
+            totalDistance: 0.0,
+            elapsedSeconds: 0,
+            elevationGain: 0.0,
+            maxAltitude: 0.0,
+            minAltitude: 0.0
+          )
+        );
+        continue;
+      }
+
+      _recoveryQueue.add(_rebuildRecordingSessionFromTrackPoints(
+        session: session,
+        trackPoints: trackPoints
+      ));
+    }
+
+    if (_recoveryQueue.isNotEmpty) {
+      _dequeueNextRecovery();
+    }
+  }
+
+  // 生き残ったtrackpointsから集計値を再計算してRecordingSessionを復元する。
+  // ライブ計算にあった精度フィルタ等は再現できないため、多少の誤差は許容する
+  RecordingSession _rebuildRecordingSessionFromTrackPoints({
+    required Session session,
+    required List<TrackPoint> trackPoints
+  }) {
+    double totalDistance = 0.0;
+    double elevationGain = 0.0;
+    double maxAltitude = trackPoints.first.altitude ?? 0.0;
+    double minAltitude = trackPoints.first.altitude ?? 0.0;
+
+    for (var i = 1; i < trackPoints.length; i++) {
+      final prev = trackPoints[i - 1];
+      final curr = trackPoints[i];
+      final prevAltitude = prev.altitude ?? 0.0;
+      final currAltitude = curr.altitude ?? 0.0;
+
+      totalDistance += Geolocator.distanceBetween(
+        prev.latitude, prev.longitude, curr.latitude, curr.longitude
+      ) / 1000.0;
+      elevationGain += max(0.0, currAltitude - prevAltitude);
+      maxAltitude = max(maxAltitude, currAltitude);
+      minAltitude = min(minAltitude, currAltitude);
+    }
+
+    final lastRecordedAt = trackPoints.last.recordedAt;
+    // recordedAtはstartedAtより前になり得る(フォールバック開始時のPosition.timestamp)ためクランプする
+    final elapsedSeconds = max(0, lastRecordedAt.difference(session.startedAt).inSeconds);
+
+    return RecordingSession(
+      sessionId: session.id,
+      startedAt: session.startedAt,
+      endedAt: lastRecordedAt,
+      totalDistance: totalDistance,
+      elapsedSeconds: elapsedSeconds,
+      elevationGain: elevationGain,
+      maxAltitude: maxAltitude,
+      minAltitude: minAltitude
+    );
+  }
+
+  void _dequeueNextRecovery() {
+    _session = _recoveryQueue.removeAt(0);
+    _pendingCompletionInfoMessage = '前回のセッションが意図せず中断されました。保存/破棄を選択してください。';
+    _setPhase(RecordingPhase.stopping);
+    _recordingSessionController.add(recordingSession);
+    _presentPendingCompletion();
   }
 
   // start recording
@@ -519,8 +659,15 @@ class TrackingService {
       await _repo.deleteRecordingSession(session: _session!);
     }
 
+    // 起動時リカバリのキューに続きがあれば、idleへ戻さずそのまま次の1件をstoppingとして提示する
+    if (_recoveryQueue.isNotEmpty) {
+      _dequeueNextRecovery();
+      return;
+    }
+
     // reset recording states
     _session = null;
+    _pendingCompletionInfoMessage = null;
     _setPhase(RecordingPhase.idle);
     _recordingSessionController.add(recordingSession);
   }

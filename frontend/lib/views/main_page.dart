@@ -8,15 +8,6 @@ import 'recording_page.dart';
 import 'saved_sessions.dart';
 import 'analytics_page.dart';
 
-class BottomNavIndexNotifier extends Notifier<int> {
-  @override
-  int build() => 0;
-
-  void setIndex(int index) => state = index;
-}
-
-final bottomNavIndexProvider = NotifierProvider<BottomNavIndexNotifier, int>(BottomNavIndexNotifier.new);
-
 class MainPage extends ConsumerStatefulWidget {
   const MainPage({super.key});
 
@@ -31,6 +22,11 @@ class _MainPageState extends ConsumerState<MainPage> with WidgetsBindingObserver
     WidgetsBinding.instance.addObserver(this);
     // アプリ起動時に一度、他端末での変更を取り込む
     ref.read(repositoryProvider).requestSync();
+    // 初回フレーム描画後(ダイアログ表示に必要なNavigatorのmoutを待ってから)、
+    // クラッシュ等で保存/破棄されないまま残ったセッションがないか確認する
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      ref.read(trackingServiceProvider).recoverOrphanedSessions();
+    });
   }
 
   @override

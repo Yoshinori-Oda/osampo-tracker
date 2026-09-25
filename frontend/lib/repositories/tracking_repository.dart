@@ -460,6 +460,13 @@ class TrackingRepository {
     return await onUpdateData();
   }
 
+  // 起動時リカバリ用: 孤立したinProgressセッションとそのtrackpoints
+  Future<List<Session>> getInProgressSessions() => _db.getInProgressSessions();
+
+  Future<List<TrackPoint>> getTrackPointsForSession(String sessionId) {
+    return _db.getTrackPointsForSession(sessionId);
+  }
+
   Future<void> deleteSession(Session session) async {
     await _db.deleteSession(session: session);
     return await onUpdateData();

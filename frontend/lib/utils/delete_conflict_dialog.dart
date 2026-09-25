@@ -5,6 +5,9 @@ import '../repositories/tracking_repository.dart';
 // MaterialAppに渡し、ダイアログをUIツリーの外(リポジトリ層)から表示するために使う
 final navigatorKey = GlobalKey<NavigatorState>();
 
+// MaterialAppに渡し、SnackBarをUIツリーの外(TrackingService)から表示するために使う
+final scaffoldMessengerKey = GlobalKey<ScaffoldMessengerState>();
+
 // 他端末で削除済みのセッションをローカルで編集していた場合に、
 // 削除を受け入れるか編集内容を残すかをユーザーに選ばせる
 Future<DeleteConflictChoice> showDeleteConflictDialog(Session session) async {

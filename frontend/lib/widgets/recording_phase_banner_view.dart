@@ -22,16 +22,22 @@ class RecordingPhaseBannerView extends ConsumerWidget {
 
     return Material(
       color: color,
-      child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-        child: Row(
-          children: [
-            Icon(icon, color: Colors.white, size: 18),
-            const SizedBox(width: 8),
-            Expanded(
-              child: Text(message, style: const TextStyle(color: Colors.white, fontSize: 13))
-            )
-          ]
+      child: InkWell(
+        // stopping中(=保存/破棄が必要)のみタップで収録タブへ誘導し、ダイアログを再表示する
+        onTap: phase == RecordingPhase.stopping
+          ? () => ref.read(trackingServiceProvider).resumePendingCompletion()
+          : null,
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+          child: Row(
+            children: [
+              Icon(icon, color: Colors.white, size: 18),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Text(message, style: const TextStyle(color: Colors.white, fontSize: 13))
+              )
+            ]
+          )
         )
       )
     );

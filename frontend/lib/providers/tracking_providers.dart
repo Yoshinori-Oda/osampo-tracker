@@ -27,10 +27,24 @@ final repositoryProvider = Provider<TrackingRepository>((ref) {
   return repo;
 });
 
+// 現在表示中のボトムナビゲーションタブ(収録タブ=0)
+class BottomNavIndexNotifier extends Notifier<int> {
+  @override
+  int build() => 0;
+
+  void setIndex(int index) => state = index;
+}
+
+final bottomNavIndexProvider = NotifierProvider<BottomNavIndexNotifier, int>(BottomNavIndexNotifier.new);
+
 // service provider
 final trackingServiceProvider = Provider<TrackingService>((ref) {
   final repo = ref.watch(repositoryProvider);
-  final service = TrackingService(repo);
+  final service = TrackingService(
+    repo,
+    getCurrentTabIndex: () => ref.read(bottomNavIndexProvider),
+    switchToRecordingTab: () => ref.read(bottomNavIndexProvider.notifier).setIndex(0),
+  );
   ref.onDispose(() => service.dispose());
   return service;
 });
