@@ -109,10 +109,15 @@ GPSが未確定/不正確な状態(アプリ起動直後・屋内・電波不良
 - **`stopRecording()`の終了地点取得もtimeLimit 1秒**。失敗した場合は最終ポイントの
   追加だけをスキップしてそのまま保存し、スナックバーで通知する。戻り値は`bool?`
   (null=取得を試みなかった、true=取得できた、false=取得を試みたが失敗した)。
-- **収録中に位置情報の権限/サービスが失われた場合**(`getPositionStream`の`onError`で
-  検知)、`_forceStopForPermissionTrouble()`が`stopRecording(skipFinalPositionFetch: true)`
-  を呼んで強制停止し、`utils/save_or_discard_dialog.dart`の`showSaveOrDiscardDialog()`
-  (通常の停止フローと共通化済み)を`navigatorKey`経由で呼び出して保存/破棄を確認する。
+- **収録中に位置情報の権限/サービスが失われた場合**、`_forceStopForPermissionTrouble()`が
+  `stopRecording(skipFinalPositionFetch: true)`を呼んで強制停止し、
+  `utils/save_or_discard_dialog.dart`の`showSaveOrDiscardDialog()`(通常の停止フローと
+  共通化済み)を`navigatorKey`経由で呼び出して保存/破棄を確認する。**検知経路は
+  `getPositionStream`の`onError`だけでは不十分**(実際に発生した不具合)。設定アプリでの
+  権限/サービス変更は必ず一度アプリをバックグラウンドに回すため、多くの場合onErrorは
+  発火しない。実質的な主検知経路は`main_page.dart`のフォアグラウンド復帰フックから呼ぶ
+  `refreshLocationAvailability()`で、`RecordingPhase.recording`中にtroubleを検知した
+  場合も同じ強制停止をトリガーする(`stopping`中の多重発火は`_phase`チェックで防止)。
 - **収録状態バナーと位置情報バナーは全タブ共通で`main_page.dart`の`body`上部に表示する**。
   どちらも非アクティブ時は`SizedBox.shrink()`で高さ0にする設計だが、それを包む
   padding/`SafeArea`は「バナーが1つもない時は一切描画しない」ようにしないと、
@@ -296,6 +301,27 @@ GPSが未確定/不正確な状態(アプリ起動直後・屋内・電波不良
   同じ分のpaddingを確保してしまい、バナー表示中だけ上部に二重の空白ができる。
   複数箇所で同じトップインセットを扱う場合は、`MediaQuery.removePadding`で
   明示的にどこまで消費済みにするかを揃えること
+- **`frontend`はdevcontainerとホストの両方からbind mountで同じファイルが見えるため、
+  devcontainer側でVSCodeを開いたままにしていると、そのDart拡張が`pubspec.lock`等の
+  変更をファイルウォッチャーで検知して自動で`flutter pub get`を実行してしまうことがある**
+  (実際に発生した不具合)。ホストが書いた`.dart_tool/package_config.json`(正しいホスト
+  パス`/Users/...`)が、devcontainer側のFlutterによってコンテナ内パス
+  (`/home/node/flutter/...`)で上書きされ、ホストでのXcodeビルド中にこの上書きへ当たると
+  `flutter`本体を含む外部パッケージが軒並み解決できなくなる(Xcodeのビルドログには
+  "Missing package product"や大量の`isn't defined`エラーとして現れ、`flutter clean`や
+  DerivedData削除を繰り返しても再現し続けるため原因が非常に分かりにくい)。
+  `osampo-tracker`直下・`frontend`直下いずれの`.vscode/settings.json`にも
+  `"dart.runPubGetOnPubspecChanges": "never"`を設定済みなので、devcontainer側/ホスト側
+  どちらのVSCodeでも有効になっているか確認すること。原因切り分け時は、ホスト側で
+  `grep -o '"rootUri": *"[^"]*flutter[^"]*"' .dart_tool/package_config.json`を実行し、
+  `rootUri`がホストパスかコンテナパスかを見ると早い
+- **Claude Codeがバックグラウンドジョブとして動作している場合、そのサンドボックスは
+  上記のbind mount済みdevcontainerとは別の独立したgit cloneであることがある**(実際に
+  発生: 作業ディレクトリが`docker-compose.yml`の`/workspace`と異なる`/workspaces/...`
+  だった、他のバックグラウンドジョブとの競合でuncommittedな変更が消えた、等で判明)。
+  ビルド関連の不具合調査でこの中のファイル(`.dart_tool`やXcodeの生成物など)を確認しても
+  ユーザーの実機環境を反映しているとは限らないため、結論を出す前にユーザー自身の
+  ホスト/devcontainer側で同じコマンドを実行してもらい、その出力で裏付けを取ること
 
 ## デバッグ Tips
 
