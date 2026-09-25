@@ -50,6 +50,8 @@ Claude Code がこのプロジェクトで作業する際のコンテキスト�
           詳細は「テスト」セクション参照
         - test_driver/: integration_test.dart(`flutter drive`実行時のドライバスクリプト。
           スクリーンショットをホストのファイルとして保存する役割)
+        - scripts/: run_e2e_tests.sh(`flutter drive`実行+ログ保存をまとめたラッパー。
+          詳細は「テスト」セクション参照)
 
 ## 同期・削除の設計 (重要)
 
@@ -130,6 +132,15 @@ GPSが未確定/不正確な状態(アプリ起動直後・屋内・電波不良
 
 ### テスト
 - ユニットテストのフレームワーク等は未導入
+- E2E実行は`scripts/run_e2e_tests.sh <run_id>`(デバイスは省略可。変える場合だけ末尾に
+  `-d <device_id>`/`--device <device_id>`を足す)で行う。デバイスの決定順は
+  `-d`指定 > `E2E_DEVICE_ID`環境変数 > スクリプト冒頭の`DEFAULT_DEVICE_ID`(各自の環境に
+  合わせて書き換えておく)
+- `run_id`はテスト内容の説明ではなく、**依頼ごとに変わる相関トークン**(Claudeがテスト実行を
+  依頼する際にその場で生成し、コピペで実行できる完全なコマンドとして提示する)。標準出力に
+  流しつつ`e2e_test_logs/<timestamp>_<run_id>_<device_id>_<PASSED|FAILED>.log`にも保存するので、
+  複数セッションでテストが前後してもrun_idで検索すれば取り違えない(`*.log`は`.gitignore`済み
+  でコミット対象外)
 - E2E/画面確認は`integration_test`パッケージ + `flutter drive`で行う。Claude Code は
   コンテナ内で動くためシミュレータ/実機を直接操作できず(`flutter devices`でも
   Linux desktopしか見えない)、次の役割分担で運用する:
@@ -245,10 +256,9 @@ dart run build_runner build
 flutter analyze
 
 # E2Eテスト実行(ホスト側でシミュレータ/実機起動後に実行。frontendディレクトリで実行)
-flutter drive \
-  --driver=test_driver/integration_test.dart \
-  --target=integration_test/app_test.dart \
-  -d <device_id>
+scripts/run_e2e_tests.sh <run_id>
+# デバイスを既定(DEFAULT_DEVICE_ID/E2E_DEVICE_ID)と変える場合のみ
+scripts/run_e2e_tests.sh <run_id> -d <device_id>
 
 # backend起動(backendディレクトリで実行)
 docker compose up -d
