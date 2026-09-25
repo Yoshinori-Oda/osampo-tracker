@@ -124,6 +124,46 @@ GPSが未確定/不正確な状態(アプリ起動直後・屋内・電波不良
   位置情報バナーと`startRecording`のブロックダイアログの両方から
   `widgets/gps_help_link.dart`経由でリンクしている。
 
+## 起動時セッションリカバリ設計 (重要)
+
+アプリがクラッシュ・強制終了(OSによるバックグラウンドプロセスの回収を含む)すると、収録中
+だったセッションは`Sessions.status = inProgress`のまま保存/破棄されずローカルDBへ残り続ける。
+`watchAllSessions()`/`getUnsyncedSessions()`は`inProgress`を除外するため、何もしなければ
+このセッションは一覧にも出ず同期もされず、見えないまま溜まり続ける。これを起動時に検出して
+必ず保存/破棄させるための設計:
+
+- **`RecordingPhase.stopping`を「保存/破棄が未確定」という状態として、通常の停止フローと
+  起動時リカバリの両方で共用する**(新しいphase値は増やさない)。`TrackingService`が
+  `_recoveryQueue`(未処理の`RecordingSession`のリスト)を持ち、`recoverOrphanedSessions()`
+  が起動時に一度だけ`Status.inProgress`の行を全件取得してキューに積み、先頭の1件を
+  `_session`にセットして`stopping`へ遷移させる。`completeSession()`で1件解決するたびに、
+  キューが残っていればidleへ戻さず次の1件をそのまま`stopping`として提示し続ける
+  (複数件同時発生は内部DB直書き換えでしか本来解消できないため、キューで1件ずつ処理させる
+  設計にしている)。
+- **集計値(距離/獲得標高/最高・最低高度/経過秒数)はライブ収録中`inProgress`のままではDBに
+  反映されないため、リカバリ時は残っている`TrackPoints`から再計算する**
+  (`_rebuildRecordingSessionFromTrackPoints`)。ライブ計算にあった精度フィルタ等は再現しない
+  ため多少の誤差は許容している(トラックポイント表示がメインコンテンツで、集計値はおまけ
+  という位置付けのため)。`elapsedSeconds`は`DateTime.now()`ではなく
+  `max(0, 最後のtrackpointのrecordedAt - session.startedAt)`で計算すること(`recordedAt`は
+  フォールバック開始時に`startedAt`より前になり得るため、クランプしないと負数になり得る)。
+- **「復帰(resume)」は提供せず、保存/破棄のみを選ばせる**。クラッシュ〜再起動の空白時間は
+  数秒〜数日と不定長になり得るため、`startRecording()`の15秒フォールバック判定よりもさらに
+  弱い保証しか得られない。「その時その場にいた」という記録の意味を保証できない以上、続きは
+  新しいセッションとして始めてもらう方針(`startRecording()`がOSキャッシュを意図的に
+  除外しているのと同じ考え方)。
+- **trackpointが1件も無い(初回書き込み前に落ちた)セッションは、保存/破棄を聞かず自動破棄する**。
+  一方、1件だけのセッションは通常通りダイアログに乗せる(観光地で「ここに行った」という
+  1点記録の用途があり得るため、意味のあるデータとして扱う)。
+- **提示経路は3つ、すべて`resumePendingCompletion()`に集約する**:
+  1. 収録タブの「収録開始」ボタンは`stopping`中「前回のセッションを処理」に差し替わり、
+     タップで警告なしそのままダイアログへ(アプリは常に収録タブから起動するため、実質
+     これが既定の入口になる)
+  2. 収録タブ以外にいる場合は、SnackBar(「収録画面へ」アクション付き)で誘導する
+  3. `RecordingPhaseBannerView`の`stopping`表示(全タブ共通の常設バナー)もタップ可能にし、
+     いつでも再度ダイアログへ戻れるようにしてある(将来、起動時の既定タブを収録タブ以外に
+     変更できるようにした場合に備えた導線。現状は常に収録タブから起動するため実質使われない)
+
 ## 開発ルール
 
 ### コーディング規約
@@ -167,6 +207,11 @@ GPSが未確定/不正確な状態(アプリ起動直後・屋内・電波不良
     `VMServiceFlutterDriver: request_data message is taking a long time to complete...`
     という警告が出ることがあるが、これは想定通りの待機時間に対する定型の進捗ログであり、
     テスト失敗ではないので無視してよい
+  - `integration_test`は(モックではなく)実機/シミュレータの本物の`app.sqlite`に対して
+    動く。テスト用データを`AppDatabase`へ直接seedするシナリオで「保存」を伴う場合、
+    `addTearDown`等で確実にそのセッションを後始末すること。忘れると実機の履歴データが
+    汚染され、backendが生きている環境ではリモートDBにもpushされてしまう(詳細は
+    「既知の落とし穴」参照)
 
 ### git
 - commitメッセージはconventionalルールを継承する
@@ -210,8 +255,23 @@ GPSが未確定/不正確な状態(アプリ起動直後・屋内・電波不良
   (リモートへのpush用)。ローカルの名前・移動手段編集用ラッパーはこれと同名にすると
   `flutter analyze`で`duplicate_definition`エラーになるので、`updateSessionInfo()`のように
   別名にすること
-- backendはDockerが必須(この開発環境ではDocker自体が使えない場合があるため、SQL変更は
-  目視レビューに留まり実DBでの検証ができないことがある)
+- backendはDockerが必須。**このdevcontainer環境ではDockerデーモンに繋がらない**
+  (`docker`/`docker-compose`のCLIはあるが、`docker ps`が
+  `dial unix /var/run/docker.sock: no such file or directory`で失敗する)ため、
+  backendを起動できず、SQL変更は目視レビューに留まり実DBでの検証は常にホスト側に委ねる必要がある
+- iOSシミュレータの位置情報操作(Xcodeの`Features > Location`、`xcrun simctl location`)は
+  macOSホスト専用の機能で、このLinuxコンテナには`xcrun`/`simctl`自体が存在せず実行できない。
+  スクリプトやGPXファイルの作成はできるが、実行(位置の注入)は必ずホスト側で行うこと
+- 同一テストプロセス内で`AppDatabase()`を複数回生成すると(`app.main()`実行後にseed用の
+  `AppDatabase()`を追加で作る等)、Driftが
+  `WARNING: It looks like you've created the database class AppDatabase multiple times`
+  という警告を出す。debugビルドのみの警告で今のところテスト失敗には至っていないが、
+  今後flakyになるようならテスト間でのDB接続の`close()`を検討すること
+- `integration_test`の保存シナリオで後始末(`addTearDown`)を忘れ、実機の本物の履歴一覧に
+  テスト用の偽セッションが残ってしまったことがある(実際に発生した不具合。残ってしまった
+  場合はアプリの履歴タブの編集モードから手動で削除するしかない)。実DBへseedするテストを
+  書くときは必ず「テストで作った行を確実に消す」経路(discardフロー経由 or 明示的な物理削除)
+  を用意すること
 - `flutter_map`の`TileLayer`表示中に、`build()`内の`addPostFrameCallback`から
   `MapController.fitCamera()`/`move()`を呼んで後からズーム・中心を変更すると、
   `TileLayer`が最初の`initialZoom`向けにタイル読み込みを始めた後の状態遷移が
