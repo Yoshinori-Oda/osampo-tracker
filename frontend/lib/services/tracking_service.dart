@@ -125,7 +125,35 @@ class TrackingService {
   // track position
   Future<void> _initTrackingStream() async {
     final hasPermission = await checkAndRequestPermission();
-    if (!hasPermission) return;
+    if (!hasPermission) {
+      // サービスOFF/権限拒否のままストリームを一度も購読できないと、
+      // onErrorが発火する機会が無くバナーがneverAcquired/stalledにフォールバックし続けてしまうため、
+      // ここで明示的にtrouble種別を判定してバナーへ反映する
+      _permissionTrouble = await _detectLocationTrouble();
+      _recomputeBanner();
+      return;
+    }
+
+    await _startPositionStream();
+  }
+
+  // 許可ダイアログを出さずに、現在のサービス/権限の状態のみを判定する
+  // (checkAndRequestPermissionと違い、フォアグラウンド復帰時などに繰り返し呼んでも安全)
+  Future<_LocationPermissionTrouble> _detectLocationTrouble() async {
+    final serviceEnabled = await Geolocator.isLocationServiceEnabled();
+    if (!serviceEnabled) return _LocationPermissionTrouble.serviceDisabled;
+
+    final permission = await Geolocator.checkPermission();
+    if (permission == LocationPermission.denied ||
+        permission == LocationPermission.deniedForever) {
+      return _LocationPermissionTrouble.permissionDenied;
+    }
+
+    return _LocationPermissionTrouble.none;
+  }
+
+  Future<void> _startPositionStream() async {
+    if (_positionStreamSubscription != null) return;
 
     // get initial position (取れなくても以後はストリームからの更新を待つだけで良い)
     try {
@@ -161,7 +189,29 @@ class TrackingService {
     );
 
     // 更新が来ていない間もバナーの表示/経過時間表示を追従させるための監視タイマー
-    _bannerWatchdogTimer = Timer.periodic(const Duration(seconds: 1), (_) => _recomputeBanner());
+    _bannerWatchdogTimer ??= Timer.periodic(const Duration(seconds: 1), (_) => _recomputeBanner());
+  }
+
+  // アプリのフォアグラウンド復帰時に呼ぶ。設定アプリでサービス/権限をON/OFFされても
+  // ストリームのonErrorやgetCurrentPositionの再試行が自動では起きないため、都度明示的に
+  // 再チェックし、trouble状態の更新とストリームの再購読(復旧時)を行う
+  Future<void> refreshLocationAvailability() async {
+    final trouble = await _detectLocationTrouble();
+    _permissionTrouble = trouble;
+    _recomputeBanner();
+
+    if (trouble == _LocationPermissionTrouble.none) {
+      await _startPositionStream();
+      return;
+    }
+
+    // 設定アプリでの操作はストリームのonErrorを発火させないため、収録中の強制停止も
+    // ここで明示的にトリガーする(onError経由の_handleLocationStreamErrorと同じ扱い)。
+    // stopping中(保存/破棄待ち)にフォアグラウンド復帰を繰り返しても再度停止処理が
+    // 走らないよう、実際に収録中(recording)の場合のみ発火させる
+    if (_phase == RecordingPhase.recording) {
+      await _forceStopForPermissionTrouble();
+    }
   }
 
   // 位置情報を(精度に関わらず)受信した際の共通処理
@@ -199,6 +249,11 @@ class TrackingService {
       // 未知のエラーはバナー化せず、次の正常な更新を待つ
       return;
     }
+
+    // geolocator側でストリームは終了しているため、復旧後にrefreshLocationAvailability()
+    // から再購読できるようクリアしておく
+    _positionStreamSubscription = null;
+
     _recomputeBanner();
 
     if (isRecording) {
