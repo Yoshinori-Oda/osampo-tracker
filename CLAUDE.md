@@ -14,6 +14,22 @@ Claude Code がこのプロジェクトで作業する際のコンテキスト�
 - フレームワーク: Flutter, Drift, Geolocator, flutter_map
 - データベース: PostgreSQL (PostGIS) + PostgREST
 
+## 詳細ドキュメント (`.claude/rules/`)
+
+設計の詳細・既知の落とし穴はトピックごとに`.claude/rules/`へ分割している。各ファイルは
+`paths`フロントマターで対象ファイルを指定しており、該当ファイルを扱うと自動で読み込まれる。
+**自動で読み込まれていなくても、下表のトピックに関わる作業・調査をする場合は着手前に該当
+ファイルをReadすること。**
+
+| ファイル | 内容 | 主な対象 |
+|---|---|---|
+| `sync-design.md` | 同期・削除の設計(tombstone/競合解決)、同期の落とし穴、同期のデバッグ | `repositories/`, `database/`, `backend/` |
+| `location-tracking.md` | 位置情報取得の堅牢性設計(`RecordingPhase`/timeLimit/バナー/強制停止) | `services/`, `models/`, `providers/`, `widgets/`, `utils/`, `main_page.dart`, `recording_page.dart` |
+| `session-recovery.md` | 起動時セッションリカバリ設計(`inProgress`残存セッションの保存/破棄) | `services/`, `database/`, `recording_page.dart` |
+| `map-display.md` | `flutter_map`のグレー画面バグと回避策(`initialCameraFit`/`maxZoom`) | `views/`, `widgets/` |
+| `e2e-testing.md` | E2Eテストの実行方法・役割分担・シナリオ作成時の注意 | `integration_test/`, `test_driver/`, `scripts/` |
+| `dev-environment.md` | ホスト/devcontainer間のbind mount競合、バックグラウンドジョブの注意、FVM | `pubspec.*`, `.fvmrc`, `ios/`, `android/`, `.vscode/` |
+
 ## ディレクトリ構成
 - tracking-app
     - backend
@@ -28,7 +44,7 @@ Claude Code がこのプロジェクトで作業する際のコンテキスト�
             - database/: Drift定義(ローカルSQLite)
             - repositories/: リモート同期ロジック(push/pull/競合解決)
             - services/: 位置情報トラッキングのドメインロジック(tracking_service.dart。
-              位置情報監視・収録の状態管理の中心。詳細は「位置情報取得の堅牢性設計」参照)
+              位置情報監視・収録の状態管理の中心)
             - models/: RecordingSession/Status/MoveMethodに加え、RecordingPhase
               (収録の状態遷移)、LocationBannerState/LocationBannerKind
               (位置情報バナーの状態)を持つ
@@ -46,128 +62,10 @@ Claude Code がこのプロジェクトで作業する際のコンテキスト�
               duration_format.dartは経過時間/時刻表示の共通フォーマッタ
         - Android: アンドロイド端末設定用ディレクトリ
         - iOS: iOS端末設定用ディレクトリ
-        - integration_test/: `flutter drive`によるE2Eシナリオ(スクリーンショット取得含む)。
-          詳細は「テスト」セクション参照
+        - integration_test/: `flutter drive`によるE2Eシナリオ(スクリーンショット取得含む)
         - test_driver/: integration_test.dart(`flutter drive`実行時のドライバスクリプト。
           スクリーンショットをホストのファイルとして保存する役割)
-        - scripts/: run_e2e_tests.sh(`flutter drive`実行+ログ保存をまとめたラッパー。
-          詳細は「テスト」セクション参照)
-
-## 同期・削除の設計 (重要)
-
-このアプリは「複数端末・同一ユーザーでの同時操作は想定しない」前提で、シンプルな
-pull型差分同期(`updated_at`ベース)を採用している。設計の要点:
-
-- **削除は物理削除ではなくtombstone方式**。`sessions.deleted_at`(削除確定から90日後の日時)を
-  立てて`updated_at`も同時に更新することで、他端末が通常の差分pullの中で「削除された」ことを
-  検知できるようにしている。ローカルのStatusにも`deletedUnsynced`があり、push成功が確認できた
-  時点でローカル行はそのまま物理削除してよい(中間状態を残す必要はない、という結論に至った)。
-- **リモートのtombstone行はcronで長周期パージ**する(`backend/cron/`、毎日3時に
-  `deleted_at < now()`の行をDELETE)。他端末が確実にtombstoneを受け取れるよう、猶予期間
-  (90日)を置いてから物理削除する。
-- **削除と編集の競合**: 他端末で削除済み(`deleted_at`が入っている)セッションをローカルで編集
-  していた場合、通常の更新PATCHは`deleted_at=is.null`を条件に含めているため0件ヒットになり、
-  これを競合として検出する。検出時はダイアログで「削除を受け入れる/編集内容を残して復活させる
-  (`deleted_at`をnullに戻すPATCH)」を選ばせる。復活先の行が長周期パージで既に物理削除されて
-  いた場合は、`register_session_with_points`への初回登録として作り直すフォールバックがある。
-- 同期のトリガーは「ローカルでの書き込み操作の直後」に加えて、通知offでも変更を取り込めるよう
-  アプリ起動時・フォアグラウンド復帰時(`WidgetsBindingObserver`)にも呼んでいる。
-- 本格的なリアルタイムpush(サーバー起動のpush通知等)は、複数端末同時操作を想定しない
-  今回の規模では投資対効果が薄いと判断し採用していない。
-
-## 位置情報取得の堅牢性設計 (重要)
-
-GPSが未確定/不正確な状態(アプリ起動直後・屋内・電波不良など)でも収録が壊れないよう、
-`TrackingService`に位置情報監視の状態管理を持たせている。設計の要点:
-
-- **収録の状態は`RecordingPhase`(idle/starting/recording/stopping)で管理する**。
-  `startRecording()`はidleの時のみ受け付け、`starting`中は連打による二重start
-  (レースコンディション)を防ぐガードになる。`recording_page.dart`は`starting`中、
-  収録タブ全体を`AbsorbPointer`+オーバーレイでinactive化し、キャンセルボタンも出す。
-- **`Geolocator.getCurrentPosition`は必ず`LocationSettings(timeLimit: ...)`を設定して
-  呼ぶこと**(標準パラメータの`timeLimit`はdeprecated。`LocationSettings`経由で渡す)。
-  無期限に待つと、GPS未確定のままハングし続ける。呼び出し箇所ごとにtimeLimitを変えている:
-  `_initTrackingStream`の初回取得とstopRecordingは1秒、startRecordingは5秒
-  (ストリームが既に動いていれば大抵は温まっているが、アプリ起動直後にすぐRECを
-  押すケースは温まっていないため長めに取っている)。
-- **`_lastGoodPositionAt`(DateTime?)が位置情報監視の中心的な状態**。精度に関わらず
-  位置を受信するたびに更新し、これを起点に「未取得(null)」「更新停止(10秒以上経過)」
-  を判定してバナー(`LocationBannerView`)に表示する。精度(accuracy>50m)は別軸の
-  ヒステリシス付きカウンタ(+3/-1、無更新中は凍結、長時間の停止から復帰した際は
-  クリーンに0リセット)で管理する。バナーの優先順位は権限エラー > 未取得/タイムアウト
-  > 精度低下(1つだけ表示)。
-- **`startRecording()`はOSの位置情報キャッシュ(`getLastKnownPosition()`)を使わない**。
-  新鮮な位置が取れなければ、このセッション内で最後に確認できた位置
-  (`_lastGoodPositionAt`が15秒以内)のみをフォールバック候補にし、確認ダイアログで
-  開始可否を聞く。15秒を超える/一度も取得できていない場合は
-  `StartRecordingBlockedException`を投げて開始をブロックする(再試行ボタン付きの
-  エラーダイアログを表示)。「セッションとして意味のあるデータかどうか」を基準に
-  しており、別セッション/別文脈の可能性があるOSキャッシュは意図的に除外している。
-- **収録開始時のtrackpointの`recordedAt`は押下時刻ではなく`Position.timestamp`
-  (実際にその位置情報が取得された時刻)を使う**。フォールバック開始時は数秒〜15秒
-  古い時刻になり得るが、意図した挙動。
-- **`stopRecording()`の終了地点取得もtimeLimit 1秒**。失敗した場合は最終ポイントの
-  追加だけをスキップしてそのまま保存し、スナックバーで通知する。戻り値は`bool?`
-  (null=取得を試みなかった、true=取得できた、false=取得を試みたが失敗した)。
-- **収録中に位置情報の権限/サービスが失われた場合**、`_forceStopForPermissionTrouble()`が
-  `stopRecording(skipFinalPositionFetch: true)`を呼んで強制停止し、
-  `utils/save_or_discard_dialog.dart`の`showSaveOrDiscardDialog()`(通常の停止フローと
-  共通化済み)を`navigatorKey`経由で呼び出して保存/破棄を確認する。**検知経路は
-  `getPositionStream`の`onError`だけでは不十分**(実際に発生した不具合)。設定アプリでの
-  権限/サービス変更は必ず一度アプリをバックグラウンドに回すため、多くの場合onErrorは
-  発火しない。実質的な主検知経路は`main_page.dart`のフォアグラウンド復帰フックから呼ぶ
-  `refreshLocationAvailability()`で、`RecordingPhase.recording`中にtroubleを検知した
-  場合も同じ強制停止をトリガーする(`stopping`中の多重発火は`_phase`チェックで防止)。
-- **収録状態バナーと位置情報バナーは全タブ共通で`main_page.dart`の`body`上部に表示する**。
-  どちらも非アクティブ時は`SizedBox.shrink()`で高さ0にする設計だが、それを包む
-  padding/`SafeArea`は「バナーが1つもない時は一切描画しない」ようにしないと、
-  ステータスバー避けの空白だけが常時残ってしまう。逆にバナー表示中は、タブ側
-  (各`AppBar`)が自前でも同じ分のステータスバー避けpaddingを確保してしまい二重の
-  空白になるため、`MediaQuery.removePadding(removeTop: hasAnyBanner)`でタブ側の
-  重複分を明示的に消費している(詳細は`main_page.dart`参照)。
-- GPSを掴みやすくするTipsは`views/gps_help_page.dart`にまとめ、「未取得/更新停止」の
-  位置情報バナーと`startRecording`のブロックダイアログの両方から
-  `widgets/gps_help_link.dart`経由でリンクしている。
-
-## 起動時セッションリカバリ設計 (重要)
-
-アプリがクラッシュ・強制終了(OSによるバックグラウンドプロセスの回収を含む)すると、収録中
-だったセッションは`Sessions.status = inProgress`のまま保存/破棄されずローカルDBへ残り続ける。
-`watchAllSessions()`/`getUnsyncedSessions()`は`inProgress`を除外するため、何もしなければ
-このセッションは一覧にも出ず同期もされず、見えないまま溜まり続ける。これを起動時に検出して
-必ず保存/破棄させるための設計:
-
-- **`RecordingPhase.stopping`を「保存/破棄が未確定」という状態として、通常の停止フローと
-  起動時リカバリの両方で共用する**(新しいphase値は増やさない)。`TrackingService`が
-  `_recoveryQueue`(未処理の`RecordingSession`のリスト)を持ち、`recoverOrphanedSessions()`
-  が起動時に一度だけ`Status.inProgress`の行を全件取得してキューに積み、先頭の1件を
-  `_session`にセットして`stopping`へ遷移させる。`completeSession()`で1件解決するたびに、
-  キューが残っていればidleへ戻さず次の1件をそのまま`stopping`として提示し続ける
-  (複数件同時発生は内部DB直書き換えでしか本来解消できないため、キューで1件ずつ処理させる
-  設計にしている)。
-- **集計値(距離/獲得標高/最高・最低高度/経過秒数)はライブ収録中`inProgress`のままではDBに
-  反映されないため、リカバリ時は残っている`TrackPoints`から再計算する**
-  (`_rebuildRecordingSessionFromTrackPoints`)。ライブ計算にあった精度フィルタ等は再現しない
-  ため多少の誤差は許容している(トラックポイント表示がメインコンテンツで、集計値はおまけ
-  という位置付けのため)。`elapsedSeconds`は`DateTime.now()`ではなく
-  `max(0, 最後のtrackpointのrecordedAt - session.startedAt)`で計算すること(`recordedAt`は
-  フォールバック開始時に`startedAt`より前になり得るため、クランプしないと負数になり得る)。
-- **「復帰(resume)」は提供せず、保存/破棄のみを選ばせる**。クラッシュ〜再起動の空白時間は
-  数秒〜数日と不定長になり得るため、`startRecording()`の15秒フォールバック判定よりもさらに
-  弱い保証しか得られない。「その時その場にいた」という記録の意味を保証できない以上、続きは
-  新しいセッションとして始めてもらう方針(`startRecording()`がOSキャッシュを意図的に
-  除外しているのと同じ考え方)。
-- **trackpointが1件も無い(初回書き込み前に落ちた)セッションは、保存/破棄を聞かず自動破棄する**。
-  一方、1件だけのセッションは通常通りダイアログに乗せる(観光地で「ここに行った」という
-  1点記録の用途があり得るため、意味のあるデータとして扱う)。
-- **提示経路は3つ、すべて`resumePendingCompletion()`に集約する**:
-  1. 収録タブの「収録開始」ボタンは`stopping`中「前回のセッションを処理」に差し替わり、
-     タップで警告なしそのままダイアログへ(アプリは常に収録タブから起動するため、実質
-     これが既定の入口になる)
-  2. 収録タブ以外にいる場合は、SnackBar(「収録画面へ」アクション付き)で誘導する
-  3. `RecordingPhaseBannerView`の`stopping`表示(全タブ共通の常設バナー)もタップ可能にし、
-     いつでも再度ダイアログへ戻れるようにしてある(将来、起動時の既定タブを収録タブ以外に
-     変更できるようにした場合に備えた導線。現状は常に収録タブから起動するため実質使われない)
+        - scripts/: run_e2e_tests.sh(`flutter drive`実行+ログ保存をまとめたラッパー)
 
 ## 開発ルール
 
@@ -177,46 +75,11 @@ GPSが未確定/不正確な状態(アプリ起動直後・屋内・電波不良
 
 ### テスト
 - ユニットテストのフレームワーク等は未導入
-- E2E実行は`scripts/run_e2e_tests.sh <run_id>`(デバイスは省略可。変える場合だけ末尾に
-  `-d <device_id>`/`--device <device_id>`を足す)で行う。デバイスの決定順は
-  `-d`指定 > `E2E_DEVICE_ID`環境変数 > スクリプト冒頭の`DEFAULT_DEVICE_ID`(各自の環境に
-  合わせて書き換えておく)
-- `run_id`はテスト内容の説明ではなく、**依頼ごとに変わる相関トークン**(Claudeがテスト実行を
-  依頼する際にその場で生成し、コピペで実行できる完全なコマンドとして提示する)。標準出力に
-  流しつつ`e2e_test_logs/<timestamp>_<run_id>_<device_id>_<PASSED|FAILED>.log`にも保存するので、
-  複数セッションでテストが前後してもrun_idで検索すれば取り違えない(`*.log`は`.gitignore`済み
-  でコミット対象外)
-- E2E/画面確認は`integration_test`パッケージ + `flutter drive`で行う。Claude Code は
-  コンテナ内で動くためシミュレータ/実機を直接操作できず(`flutter devices`でも
-  Linux desktopしか見えない)、次の役割分担で運用する:
-  - ユーザー: ホスト側で`flutter drive`を実行してテストシナリオを走らせる(実行と
-    完了報告のみ担当)
-  - Claude: シナリオ(`integration_test/*.dart`)のコード自体は書く。実行後は
-    `frontend/integration_test_screenshots/`配下に保存されたスクリーンショットPNGを
-    Readツールで開いて解析する(このディレクトリは`/workspace`にbind mountされて
-    いるため、ホストで生成したファイルがそのままコンテナから見える)
-  - `test_driver/integration_test.dart`が`onScreenshot`コールバックでPNGを
-    `integration_test_screenshots/<name>.png`に書き出す。シナリオ側は
-    `IntegrationTestWidgetsFlutterBinding.convertFlutterSurfaceToImage()`→
-    `takeScreenshot('name')`の順で呼ぶ(Android実機/エミュレータでは
-    `convertFlutterSurfaceToImage`が必須。iOSでは無視されるが呼んでおいて問題ない)
-  - `integration_test_screenshots/`は毎回上書きされる一時成果物なので`.gitignore`
-    済み、コミット対象にしない
-  - **`pumpAndSettle()`は`flutter_map`のタイル読み込み(ネットワーク経由)の完了を待たない**
-    (アニメーション/再描画フレームが収まるのを待つだけで、任意のFuture/HTTP完了は
-    対象外のため)。地図が写るシーンでスクリーンショットを撮る前は、`pumpAndSettle()`に
-    加えて`tester.pump(const Duration(seconds: 3))`等の実時間待機を挟むこと(実例:
-    `integration_test/app_test.dart`)。挟まずに撮ると、タイルが揃う前の一部グレーの
-    地図が写り込む
-  - 上記の実時間待機を挟むと、`flutter drive`実行時に
-    `VMServiceFlutterDriver: request_data message is taking a long time to complete...`
-    という警告が出ることがあるが、これは想定通りの待機時間に対する定型の進捗ログであり、
-    テスト失敗ではないので無視してよい
-  - `integration_test`は(モックではなく)実機/シミュレータの本物の`app.sqlite`に対して
-    動く。テスト用データを`AppDatabase`へ直接seedするシナリオで「保存」を伴う場合、
-    `addTearDown`等で確実にそのセッションを後始末すること。忘れると実機の履歴データが
-    汚染され、backendが生きている環境ではリモートDBにもpushされてしまう(詳細は
-    「既知の落とし穴」参照)
+- E2E/画面確認は`integration_test` + `flutter drive`で行う。Claudeはシミュレータ/実機を
+  操作できないため、**実行はユーザーがホスト側で行い、Claudeはシナリオの作成と
+  スクリーンショットの解析を担当する**。実行を依頼する際はClaudeがその場で`run_id`を生成し、
+  コピペで実行できる完全なコマンド(`scripts/run_e2e_tests.sh <run_id>`)として提示する
+  (詳細: `.claude/rules/e2e-testing.md`)
 
 ### git
 - commitメッセージはconventionalルールを継承する
@@ -225,6 +88,12 @@ GPSが未確定/不正確な状態(アプリ起動直後・屋内・電波不良
 - `frontend/pubspec.lock`はコミット対象(Flutterはアプリについてはlockをコミットするのが公式推奨。
   ライブラリ/プラグインとは扱いが異なるので注意)。`flutter analyze`等の実行で無関係な依存
   バージョンの差分が紛れ込むことがあるので、意図しない変更はコミット前に`git checkout`で戻す
+
+### ドキュメント
+- 新しい設計判断・既知の落とし穴を追記する際は、このファイルではなく該当する
+  `.claude/rules/*.md`に書くこと。どれにも当てはまらないトピックが増えた場合は新しい
+  ファイルを作り(`paths`フロントマターで対象を指定)、上の表に追加する。このファイルには
+  常に必要な情報(目的・構成・開発ルール・環境の制約)だけを残す
 
 ## 重要な制約
 
@@ -246,107 +115,18 @@ GPSが未確定/不正確な状態(アプリ起動直後・屋内・電波不良
 - 許可された MCP サーバのみ使用可能(`/etc/claude-code/managed-mcp.json` 参照)
 - このプロジェクトで使う MCP は `.mcp.json` に明示
 
-## 既知の落とし穴
+## 実行環境の制約 (常に意識すること)
 
-- `last_synced_at`など同期の比較に使うタイムスタンプは必ず`.toUtc().toIso8601String()`で
-  保存・送信すること。ローカル時刻のまま保存すると、UTC以外のタイムゾーンの端末で
-  `p_last_synced_at`がタイムゾーン分だけ未来の値としてサーバーに解釈され、その間に他端末で
-  更新された行がpullの差分から漏れ続ける不具合になる(実際に発生した既知の不具合)
-- `TrackingRepository`のコンストラクタは開発中、毎回`last_synced_at`をクリアする
-  (`_clearLastSyncedAtForTest`)。本番相当の挙動を確認したい場合はこれを外す必要がある
-- PostgRESTのテーブル直叩きPATCHはidだけで絞ると`deleted_at`済みの行も無条件に上書きできて
-  しまう。競合検出が必要な更新には`&deleted_at=is.null`等のフィルタを必ず付けること
-- `TrackingRepository`には既にHTTP PATCH送信用の内部メソッド`updateSession()`が存在する
-  (リモートへのpush用)。ローカルの名前・移動手段編集用ラッパーはこれと同名にすると
-  `flutter analyze`で`duplicate_definition`エラーになるので、`updateSessionInfo()`のように
-  別名にすること
-- backendはDockerが必須。**このdevcontainer環境ではDockerデーモンに繋がらない**
-  (`docker`/`docker-compose`のCLIはあるが、`docker ps`が
-  `dial unix /var/run/docker.sock: no such file or directory`で失敗する)ため、
-  backendを起動できず、SQL変更は目視レビューに留まり実DBでの検証は常にホスト側に委ねる必要がある
-- iOSシミュレータの位置情報操作(Xcodeの`Features > Location`、`xcrun simctl location`)は
-  macOSホスト専用の機能で、このLinuxコンテナには`xcrun`/`simctl`自体が存在せず実行できない。
-  スクリプトやGPXファイルの作成はできるが、実行(位置の注入)は必ずホスト側で行うこと
-- 同一テストプロセス内で`AppDatabase()`を複数回生成すると(`app.main()`実行後にseed用の
-  `AppDatabase()`を追加で作る等)、Driftが
-  `WARNING: It looks like you've created the database class AppDatabase multiple times`
-  という警告を出す。debugビルドのみの警告で今のところテスト失敗には至っていないが、
-  今後flakyになるようならテスト間でのDB接続の`close()`を検討すること
-- `integration_test`の保存シナリオで後始末(`addTearDown`)を忘れ、実機の本物の履歴一覧に
-  テスト用の偽セッションが残ってしまったことがある(実際に発生した不具合。残ってしまった
-  場合はアプリの履歴タブの編集モードから手動で削除するしかない)。実DBへseedするテストを
-  書くときは必ず「テストで作った行を確実に消す」経路(discardフロー経由 or 明示的な物理削除)
-  を用意すること
-- `flutter_map`の`TileLayer`表示中に、`build()`内の`addPostFrameCallback`から
-  `MapController.fitCamera()`/`move()`を呼んで後からズーム・中心を変更すると、
-  `TileLayer`が最初の`initialZoom`向けにタイル読み込みを始めた後の状態遷移が
-  うまく処理されず、タイルだけグレーのまま表示されなくなることがある(エラーは
-  一切出ない。`PolylineLayer`/`MarkerLayer`は`MapCamera`を直接参照して毎フレーム
-  描画するため正常に表示され、タイルだけ症状が出るのが見分け方)。初期表示時に
-  boundsへ自動フィットしたい場合は、後から`fitCamera()`を呼ぶのではなく
-  `MapOptions.initialCameraFit`を使うこと。`TileLayer`が一度も間違ったズームで
-  タイル読み込みをする前に正しいカメラ状態で初期化されるため、この不具合が
-  起きない(実例: `session_detail_view.dart`の`_DetailMapView`)
-- セッションのトラックポイントは、REC開始から1秒以内(`TrackingService`の
-  `Timer.periodic`が最初に発火する前)にSTOP→保存を確定すると1点だけになり得る
-  (`elapsedSeconds`が`0`のままで、`stopRecording()`の終了点追加条件
-  `% 5 != 0`を満たさないため)。トラックポイントが1点のみだと`LatLngBounds`の
-  幅・高さが0になり、`CameraFit.bounds`のズーム計算が`Infinity`になって上記と
-  同様のグレー画面バグを再現するため、`CameraFit.bounds`には`maxZoom`を
-  設定してこの退化ケースを防ぐこと
-- 画面上部に条件付きで出し入れするバナー(`main_page.dart`の収録状態/位置情報バナー等)を
-  `SafeArea`で包む場合、`SafeArea`の`removeTop`は自分の子孫にしか伝播しない。
-  バナーと兄弟関係にある別のWidget(タブ内の`AppBar`など)は、自分では
-  まだステータスバー分のpaddingが消費されていないと判断して自前でも
-  同じ分のpaddingを確保してしまい、バナー表示中だけ上部に二重の空白ができる。
-  複数箇所で同じトップインセットを扱う場合は、`MediaQuery.removePadding`で
-  明示的にどこまで消費済みにするかを揃えること
-- **`frontend`はdevcontainerとホストの両方からbind mountで同じファイルが見えるため、
-  devcontainer側でVSCodeを開いたままにしていると、そのDart拡張が`pubspec.lock`等の
-  変更をファイルウォッチャーで検知して自動で`flutter pub get`を実行してしまうことがある**
-  (実際に発生した不具合)。ホストが書いた`.dart_tool/package_config.json`(正しいホスト
-  パス`/Users/...`)が、devcontainer側のFlutterによってコンテナ内パス
-  (`/home/node/flutter/...`)で上書きされ、ホストでのXcodeビルド中にこの上書きへ当たると
-  `flutter`本体を含む外部パッケージが軒並み解決できなくなる(Xcodeのビルドログには
-  "Missing package product"や大量の`isn't defined`エラーとして現れ、`flutter clean`や
-  DerivedData削除を繰り返しても再現し続けるため原因が非常に分かりにくい)。
-  `osampo-tracker`直下・`frontend`直下いずれの`.vscode/settings.json`にも
-  `"dart.runPubGetOnPubspecChanges": "never"`を設定済みなので、devcontainer側/ホスト側
-  どちらのVSCodeでも有効になっているか確認すること。原因切り分け時は、ホスト側で
-  `grep -o '"rootUri": *"[^"]*flutter[^"]*"' .dart_tool/package_config.json`を実行し、
-  `rootUri`がホストパスかコンテナパスかを見ると早い
-- **Claude Codeがバックグラウンドジョブとして動作している場合、そのサンドボックスは
-  上記のbind mount済みdevcontainerとは別の独立したgit cloneであることがある**(実際に
-  発生: 作業ディレクトリが`docker-compose.yml`の`/workspace`と異なる`/workspaces/...`
-  だった、他のバックグラウンドジョブとの競合でuncommittedな変更が消えた、等で判明)。
-  ビルド関連の不具合調査でこの中のファイル(`.dart_tool`やXcodeの生成物など)を確認しても
-  ユーザーの実機環境を反映しているとは限らないため、結論を出す前にユーザー自身の
-  ホスト/devcontainer側で同じコマンドを実行してもらい、その出力で裏付けを取ること
-
-## デバッグ Tips
-
-- 同期の流れは`print`ベースのログ(`[sync] ...`)で追える。`avoid_print`のlint infoは既知で許容している
-- 複数端末での同期テストは、同一の`_userId`(現状ハードコード: `11111111-1111-1111-1111-111111111111`)
-  を共有する複数のシミュレータ/実機、または複数のローカルDBファイルで行う
-
-## Flutterバージョン管理 (FVM)
-
-ホスト(実機テスト用)とdevcontainer(Claude Code/静的解析用)でFlutterのインストール方法が
-無指定・別管理だったため、`pubspec.lock`が実行環境ごとに揺れたり、devcontainer側の
-`flutter analyze`が実際とは違うSDKバージョンを見て赤線だらけになる不具合があった。現状は
-1人・1台(ホスト)運用のため、**ホスト側の現在のバージョンを`frontend/.fvmrc`に固定し、
-devcontainer側だけがFVM経由でそれに追従する**片側だけの構成にしている(ホスト側にFVM導入は
-不要、今まで通りの運用でよい)。
-
-- `frontend/.fvmrc`: ホストの`flutter --version`が変わったら追従してここも更新すること
-  (自動検知はできないので、ホストをupgradeしたら手動で揃えてdevcontainerをrebuildする)
-- devcontainerの`postCreateCommand`(rebuild時に一度だけ実行)が`.fvmrc`を読んで
-  `fvm install`→`fvm flutter pub get`まで自動で行う。**ただしこれはVSCode/CursorのDev
-  Containers拡張経由でのみ発火する**。CLIから`docker compose run --rm claude`で起動した
-  場合は自動実行されないため、初回だけ手動で`cd frontend && fvm install && fvm flutter pub get`
-  を実行すること
-- devcontainer側でVSCodeの「Flutter SDKをダウンロード」的な標準インストールフローは
-  二重管理になるため使わないこと(FVM管理下の`.fvm/flutter_sdk`をDart拡張が自動検出する)
+- **このdevcontainerではDockerデーモンに繋がらない**(`docker ps`が失敗する)ためbackendを
+  起動できない。SQL変更は目視レビューに留まり、実DBでの検証はホスト側に委ねる
+- **シミュレータ/実機・`xcrun`/`simctl`はコンテナから操作できない**。E2E実行や位置情報の
+  注入はホスト側で行う
+- **`frontend`はホストとdevcontainerでbind mount共有されている**。また、バックグラウンド
+  ジョブのClaude Codeは独立したgit cloneで動いていることがある。ビルド不具合の調査では
+  手元のファイルだけで結論を出さず、ユーザーの環境で裏付けを取ること
+  (詳細: `.claude/rules/dev-environment.md`)
+- devcontainer側のFlutterはFVM(`frontend/.fvmrc`)でホストのバージョンに追従させている
+  (詳細: `.claude/rules/dev-environment.md`)
 
 ## よく使うコマンド
 
@@ -368,5 +148,3 @@ scripts/run_e2e_tests.sh <run_id> -d <device_id>
 # backend起動(backendディレクトリで実行)
 docker compose up -d
 ```
-
-## 参考
