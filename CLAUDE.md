@@ -53,8 +53,9 @@ Claude Code がこのプロジェクトで作業する際のコンテキスト�
           詳細は「テスト」セクション参照
         - test_driver/: integration_test.dart(`flutter drive`実行時のドライバスクリプト。
           スクリーンショットをホストのファイルとして保存する役割)
-        - scripts/: run_e2e_tests.sh(`flutter drive`実行+ログ保存をまとめたラッパー。
-          詳細は「テスト」セクション参照)
+        - scripts/: run_checks.sh(ホスト側で`flutter analyze`/`flutter test`/`flutter drive`等を
+          実行し、結果をすべて`host_check_logs/`へ保存するスクリプト)と、そのe2eステップを呼ぶ
+          だけのrun_e2e_tests.sh。詳細は「テスト」セクション参照
 
 ## 同期・削除の設計 (重要)
 
@@ -202,11 +203,14 @@ GPSが未確定/不正確な状態(アプリ起動直後・屋内・電波不良
   - Claude: 実装と一緒に、その変更を検証するテスト(`test/`配下のユニット/ウィジェットテスト、
     画面確認が必要なら`integration_test/`のシナリオ)を書く。ホストで実行してもらう
     コマンドはコピペで実行できる完全な形で提示する
-  - ユーザー: ホスト側でテスト・静的解析を実行し、結果(失敗時はログ)をClaudeに渡す
-  - Claude: 結果・ログ・スクリーンショットを読んで修正する。**実行結果を確認するまで
+  - ユーザー: ホスト側で`scripts/run_checks.sh`を実行する(実行と完了報告のみ担当。
+    結果はファイルに残るので、出力を貼り付けて渡す必要はない)
+  - Claude: `frontend/host_check_logs/`の該当run_idの`SUMMARY.md`・各ログ・スクリーンショットを
+    Readツールで読んで修正する(このディレクトリはbind mount経由でコンテナからも見える)。**実行結果を確認するまで
     「動作確認済み」とは言わない**
 - Driftの`*.g.dart`などコード生成物もホスト側の`build_runner`でしか更新できない。
-  テーブル定義を変えた場合は、生成コマンドの実行をユーザーに依頼すること
+  テーブル定義を変えた場合は、生成コマンドの実行(`run_checks.sh <run_id> codegen ...`)を
+  ユーザーに依頼すること
 - 2026-09-15〜09-28のdevcontainerは、誤った入れ子の`.devcontainer`定義から起動していたため
   firewall・named volumeが効いていなかった(詳細: `yoda-container/docs/troubleshooting.md`の
   「正規のdevcontainer定義で起動しているかの確認」)。**この期間に書かれた本ファイルの
@@ -224,24 +228,39 @@ GPSが未確定/不正確な状態(アプリ起動直後・屋内・電波不良
 ### テスト
 - 標準の`flutter_test`(`test/`配下、`flutter test`で実行)以外のテストフレームワーク・
   モックライブラリは未導入。テストは「開発環境の方針」の通りホスト側で実行する
-- E2E実行は`scripts/run_e2e_tests.sh <run_id>`(デバイスは省略可。変える場合だけ末尾に
-  `-d <device_id>`/`--device <device_id>`を足す)で行う。デバイスの決定順は
-  `-d`指定 > `E2E_DEVICE_ID`環境変数 > スクリプト冒頭の`DEFAULT_DEVICE_ID`(各自の環境に
+- **ホスト側での実行はすべて`scripts/run_checks.sh <run_id> [step...]`で行う**(frontendで実行)。
+  stepは`pubget`/`codegen`/`analyze`/`test`/`e2e`/`all`(=analyze test e2e)で、省略時は
+  `analyze test`。指定順に関わらずpubget→codegen→analyze→test→e2eの順に1回ずつ実行し、
+  途中で失敗しても残りのstepは実行する。`test`は`-t <path>`(複数可)で対象を絞れる
+  (`test/widget_test.dart`は`flutter create`の雛形のまま壊れているため、全件実行すると
+  これが失敗する。消すか直すまでは対象を明示すること)。`analyze`は`--no-fatal-infos`で
+  実行するため既知のinfo(`avoid_print`)だけではFAILEDにならないが、指摘は全件記録する
+- 結果は`frontend/host_check_logs/<timestamp>_<run_id>_<PASSED|FAILED>/`に保存される
+  (`.gitignore`済み):
+  - `SUMMARY.md`: 実行環境(ブランチ/コミット/未コミット変更の有無/ホストのFlutterバージョン)、
+    stepごとの結果・終了コード・所要時間、analyzeの指摘一覧、testの失敗テスト名、
+    失敗したstepのログ末尾。**Claudeはまずこれを読む**
+  - `<step>.log`: 各stepの出力全文
+  - `screenshots/`: e2eのスクリーンショットのコピー(実行ごとに残るので前回との比較にも使える)
+- E2Eのみ実行する場合は従来通り`scripts/run_e2e_tests.sh <run_id>`でもよい(`run_checks.sh
+  <run_id> e2e`を呼ぶだけのラッパー)。デバイスは省略可で、変える場合だけ
+  `-d <device_id>`/`--device <device_id>`を足す。デバイスの決定順は`-d`指定 >
+  `E2E_DEVICE_ID`環境変数 > `run_checks.sh`冒頭の`DEFAULT_DEVICE_ID`(各自の環境に
   合わせて書き換えておく)
 - `run_id`はテスト内容の説明ではなく、**依頼ごとに変わる相関トークン**(Claudeがテスト実行を
-  依頼する際にその場で生成し、コピペで実行できる完全なコマンドとして提示する)。標準出力に
-  流しつつ`e2e_test_logs/<timestamp>_<run_id>_<device_id>_<PASSED|FAILED>.log`にも保存するので、
-  複数セッションでテストが前後してもrun_idで検索すれば取り違えない(`*.log`は`.gitignore`済み
-  でコミット対象外)
+  依頼する際にその場で生成し、コピペで実行できる完全なコマンドとして提示する)。複数セッションで
+  テストが前後してもrun_idで検索すれば取り違えない。**同じrun_idを使い回して再実行すると
+  どの実行結果か区別しにくくなるため、再実行を依頼する際も新しいrun_idを発行すること**。
+  (以前の`e2e_test_logs/`は旧形式のログ置き場で、今後は書き込まれない)
 - E2E/画面確認は`integration_test`パッケージ + `flutter drive`で行う。Claude Code は
   コンテナ内で動くためシミュレータ/実機を直接操作できず(そもそもコンテナにFlutterが
   無い)、次の役割分担で運用する:
-  - ユーザー: ホスト側で`flutter drive`を実行してテストシナリオを走らせる(実行と
-    完了報告のみ担当)
-  - Claude: シナリオ(`integration_test/*.dart`)のコード自体は書く。実行後は
-    `frontend/integration_test_screenshots/`配下に保存されたスクリーンショットPNGを
-    Readツールで開いて解析する(このディレクトリは`/workspace`にbind mountされて
-    いるため、ホストで生成したファイルがそのままコンテナから見える)
+  - ユーザー: ホスト側で`run_checks.sh <run_id> e2e`(または`run_e2e_tests.sh`)を実行して
+    テストシナリオを走らせる(実行と完了報告のみ担当)
+  - Claude: シナリオ(`integration_test/*.dart`)のコード自体は書く。実行後は該当run_idの
+    `host_check_logs/.../screenshots/`(実行直後なら`frontend/integration_test_screenshots/`も
+    同じ内容)のスクリーンショットPNGをReadツールで開いて解析する(bind mount経由で、
+    ホストで生成したファイルがそのままコンテナから見える)
   - `test_driver/integration_test.dart`が`onScreenshot`コールバックでPNGを
     `integration_test_screenshots/<name>.png`に書き出す。シナリオ側は
     `IntegrationTestWidgetsFlutterBinding.convertFlutterSurfaceToImage()`→
@@ -389,18 +408,16 @@ backendの`docker compose`も含め、以下はすべてホスト側で実行す
 # 起動
 flutter run
 
-# ローカルDB設定更新(frontendディレクトリで実行)
-dart run build_runner build
-
-# 静的解析
-flutter analyze
-
-# ユニット/ウィジェットテスト(frontendディレクトリで実行)
-flutter test
-
-# E2Eテスト実行(ホスト側でシミュレータ/実機起動後に実行。frontendディレクトリで実行)
-scripts/run_e2e_tests.sh <run_id>
-# デバイスを既定(DEFAULT_DEVICE_ID/E2E_DEVICE_ID)と変える場合のみ
+# 以下はfrontendディレクトリで実行し、結果はhost_check_logs/<timestamp>_<run_id>_<結果>/に残る
+# 静的解析 + ユニット/ウィジェットテスト(既定)
+scripts/run_checks.sh <run_id>
+# テスト対象を絞る
+scripts/run_checks.sh <run_id> analyze test -t test/xxx_test.dart
+# ローカルDB設定更新(build_runner)を含める / worktree作成直後はpubgetも
+scripts/run_checks.sh <run_id> pubget codegen analyze test
+# E2Eまで全部(ホスト側でシミュレータ/実機起動後に実行)
+scripts/run_checks.sh <run_id> all
+# E2Eのみ(デバイスを既定と変える場合のみ -d)
 scripts/run_e2e_tests.sh <run_id> -d <device_id>
 
 # backend起動(backendディレクトリで実行)
