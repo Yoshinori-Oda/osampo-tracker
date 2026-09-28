@@ -5,7 +5,6 @@ import 'package:latlong2/latlong.dart';
 import '../models/recording_phase.dart';
 import '../providers/tracking_providers.dart';
 import '../services/tracking_service.dart' show StartRecordingBlockedException;
-import '../utils/save_or_discard_dialog.dart';
 import '../widgets/compass.dart';
 import '../widgets/gps_help_link.dart';
 import 'map_view.dart';
@@ -391,7 +390,6 @@ class _RecordingPageState extends ConsumerState<RecordingPage> {
 
     if (shouldStop != true) return;
 
-    final session = service.recordingSession;
     final finalPointFetched = await service.stopRecording();
 
     if (!context.mounted) return;
@@ -401,17 +399,7 @@ class _RecordingPageState extends ConsumerState<RecordingPage> {
       );
     }
 
-    // save / discard dialog
-    if (session == null) return;
-
-    await showSaveOrDiscardDialog(
-      sessionStartedAt: session.startedAt,
-      onDiscard: () => service.completeSession(doSave: false),
-      onSave: (sessionName, moveMethod) => service.completeSession(
-        doSave: true,
-        sessionName: sessionName,
-        moveMethod: moveMethod
-      )
-    );
+    // save / discard screen (強制停止/起動時リカバリと同じ経路で表示する)
+    await service.resumePendingCompletion();
   }
 }

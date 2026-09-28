@@ -37,12 +37,15 @@ Claude Code がこのプロジェクトで作業する際のコンテキスト�
             - views/: 画面(例: saved_sessions.dartは保存済みセッション一覧。編集モード中に
               ListTileをタップすると名前・移動手段を編集するダイアログを表示する。名前欄は
               空欄でsubmitされた場合は変更しない。移動手段は`DropdownButtonFormField<MoveMethod>`
-              で選択する。gps_help_page.dartはGPSを掴みやすくするためのTipsページ)
+              で選択する。gps_help_page.dartはGPSを掴みやすくするためのTipsページ。
+              save_or_discard_page.dartは収録停止後の保存/破棄画面で、session_detail_view.dartの
+              `SessionDetailTitle`/`SessionDetailBody`を流用して詳細画面と同じ見た目にしている)
             - widgets/: 全タブ共通で表示するバナー(location_banner_view.dart/
               recording_phase_banner_view.dart)や、そこから使うgps_help_link.dartなど
             - utils/: navigatorKeyやダイアログ等、UI外から呼ぶための小物。
-              save_or_discard_dialog.dartは収録停止後の保存/破棄ダイアログで、
-              通常の停止フローと権限エラーによる強制停止フローの両方から使う共通部品。
+              save_or_discard_screen.dartは保存/破棄画面を表示する`showSaveOrDiscardScreen()`で、
+              通常の停止/権限エラーによる強制停止/起動時リカバリのすべてから`TrackingService`経由で
+              使う共通の入口(詳細は「起動時セッションリカバリ設計」の「保存/破棄画面」参照)。
               duration_format.dartは経過時間/時刻表示の共通フォーマッタ
         - Android: アンドロイド端末設定用ディレクトリ
         - iOS: iOS端末設定用ディレクトリ
@@ -111,7 +114,7 @@ GPSが未確定/不正確な状態(アプリ起動直後・屋内・電波不良
   (null=取得を試みなかった、true=取得できた、false=取得を試みたが失敗した)。
 - **収録中に位置情報の権限/サービスが失われた場合**、`_forceStopForPermissionTrouble()`が
   `stopRecording(skipFinalPositionFetch: true)`を呼んで強制停止し、
-  `utils/save_or_discard_dialog.dart`の`showSaveOrDiscardDialog()`(通常の停止フローと
+  `utils/save_or_discard_screen.dart`の`showSaveOrDiscardScreen()`(通常の停止フローと
   共通化済み)を`navigatorKey`経由で呼び出して保存/破棄を確認する。**検知経路は
   `getPositionStream`の`onError`だけでは不十分**(実際に発生した不具合)。設定アプリでの
   権限/サービス変更は必ず一度アプリをバックグラウンドに回すため、多くの場合onErrorは
@@ -158,16 +161,36 @@ GPSが未確定/不正確な状態(アプリ起動直後・屋内・電波不良
   新しいセッションとして始めてもらう方針(`startRecording()`がOSキャッシュを意図的に
   除外しているのと同じ考え方)。
 - **trackpointが1件も無い(初回書き込み前に落ちた)セッションは、保存/破棄を聞かず自動破棄する**。
-  一方、1件だけのセッションは通常通りダイアログに乗せる(観光地で「ここに行った」という
+  一方、1件だけのセッションは通常通り保存/破棄画面に乗せる(観光地で「ここに行った」という
   1点記録の用途があり得るため、意味のあるデータとして扱う)。
 - **提示経路は3つ、すべて`resumePendingCompletion()`に集約する**:
   1. 収録タブの「収録開始」ボタンは`stopping`中「前回のセッションを処理」に差し替わり、
-     タップで警告なしそのままダイアログへ(アプリは常に収録タブから起動するため、実質
+     タップで警告なしそのまま保存/破棄画面へ(アプリは常に収録タブから起動するため、実質
      これが既定の入口になる)
   2. 収録タブ以外にいる場合は、SnackBar(「収録画面へ」アクション付き)で誘導する
   3. `RecordingPhaseBannerView`の`stopping`表示(全タブ共通の常設バナー)もタップ可能にし、
-     いつでも再度ダイアログへ戻れるようにしてある(将来、起動時の既定タブを収録タブ以外に
+     いつでも再度保存/破棄画面へ戻れるようにしてある(将来、起動時の既定タブを収録タブ以外に
      変更できるようにした場合に備えた導線。現状は常に収録タブから起動するため実質使われない)
+  通常の停止フロー(`recording_page.dart`)も、停止後は`resumePendingCompletion()`で同じ画面を出す。
+- **保存/破棄画面(`views/save_or_discard_page.dart`)の設計**:
+  - 全画面ルート(`fullscreenDialog`)としてpushする。表示内容はセッション詳細画面を
+    そのまま模したもの(セッション名は既定名、移動手段は未選択として空欄)で、強制停止/
+    リカバリの理由(`infoMessage`)は下部固定領域の保存/破棄ボタンの上に赤文字で出す
+  - 閉じる(×/戻る)は「後で決める」扱い。保存/破棄は未確定のまま`stopping`に残り、上記の
+    提示経路からいつでも戻って来られる(収録タブ内に埋め込む案もあったが、どの画面からでも
+    即戻れる点を優先してこの形にした)
+  - 保存/破棄はどちらも確認ダイアログを挟む。破棄は「破棄/キャンセル」、保存は名前・移動手段を
+    入力させるダイアログ(「保存/キャンセル」)。名前欄は既定名をヒント文字(`hintText`)で出し、
+    空欄のまま保存したらその既定名で保存する。移動手段は`DropdownButtonFormField<MoveMethod>`
+    で初期値は徒歩(将来オプションで「よく使う移動手段」を初期値にできるようにする想定)
+  - 起動時リカバリのキューで次の1件がある場合は、開いている画面を`pushReplacement`で
+    次のセッションの画面に差し替える。同じセッションの画面が既に開いていれば重ねて開かない
+  - **`completeSession()`は保存/破棄のDB反映を待たずに、先に次の状態(次の1件の提示/idle)へ
+    遷移する**。repository側の保存/破棄はリモート同期の完了まで待つため通信状況次第で時間が
+    かかり、その間`stopping`のままだと確定済みのセッションの画面を再度開けてしまう(二重確定)
+    ため。反映前にアプリが落ちても`inProgress`のまま残るだけで、次回起動時のリカバリで拾える。
+    画面側はこの「呼び出しの中で同期的に差し替えが起きる」ことを前提に、自分がまだ
+    `isCurrent`の場合だけpopしている
 
 ## 開発環境の方針 (コンテナ/ホストの役割分担) (重要)
 
