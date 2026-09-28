@@ -33,6 +33,10 @@ migrate_working_dir/
 /build/
 /coverage/
 
+# FVM (Flutter Version Management) が作るマシン固有のシンボリックリンク。
+# バージョン指定自体は.fvmrc(コミット対象)で行う
+.fvm/
+
 # flutter drive (integration_test) が保存するスクリーンショット。実行のたびに変わる一時成果物
 /integration_test_screenshots/
 

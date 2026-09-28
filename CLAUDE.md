@@ -329,6 +329,25 @@ GPSが未確定/不正確な状態(アプリ起動直後・屋内・電波不良
 - 複数端末での同期テストは、同一の`_userId`(現状ハードコード: `11111111-1111-1111-1111-111111111111`)
   を共有する複数のシミュレータ/実機、または複数のローカルDBファイルで行う
 
+## Flutterバージョン管理 (FVM)
+
+ホスト(実機テスト用)とdevcontainer(Claude Code/静的解析用)でFlutterのインストール方法が
+無指定・別管理だったため、`pubspec.lock`が実行環境ごとに揺れたり、devcontainer側の
+`flutter analyze`が実際とは違うSDKバージョンを見て赤線だらけになる不具合があった。現状は
+1人・1台(ホスト)運用のため、**ホスト側の現在のバージョンを`frontend/.fvmrc`に固定し、
+devcontainer側だけがFVM経由でそれに追従する**片側だけの構成にしている(ホスト側にFVM導入は
+不要、今まで通りの運用でよい)。
+
+- `frontend/.fvmrc`: ホストの`flutter --version`が変わったら追従してここも更新すること
+  (自動検知はできないので、ホストをupgradeしたら手動で揃えてdevcontainerをrebuildする)
+- devcontainerの`postCreateCommand`(rebuild時に一度だけ実行)が`.fvmrc`を読んで
+  `fvm install`→`fvm flutter pub get`まで自動で行う。**ただしこれはVSCode/CursorのDev
+  Containers拡張経由でのみ発火する**。CLIから`docker compose run --rm claude`で起動した
+  場合は自動実行されないため、初回だけ手動で`cd frontend && fvm install && fvm flutter pub get`
+  を実行すること
+- devcontainer側でVSCodeの「Flutter SDKをダウンロード」的な標準インストールフローは
+  二重管理になるため使わないこと(FVM管理下の`.fvm/flutter_sdk`をDart拡張が自動検出する)
+
 ## よく使うコマンド
 
 ```bash
