@@ -242,8 +242,10 @@ extract_test_failures() {
     index($0, "EXCEPTION CAUGHT BY") { inblock = 1; blocks++; if (blocks > 5) exit }
     inblock {
       line = $0
-      sub(/^flutter: /, "", line)
-      if (line ~ /^#[0-9]+ / && line !~ /test\/[^ ]*\.dart/) next
+      # flutter driveの出力は行頭に"flutter: "(空行は"flutter:"のみ)が付くので外す
+      sub(/^flutter:( |$)/, "", line)
+      # package:flutter_test/... は "test/" を含むので、file:///のプロジェクト内パスに限定する
+      if (line ~ /^#[0-9]+ / && line !~ /file:\/\/\/[^ ]*\/(integration_)?test\/[^ ]*\.dart/) next
       if (line ~ /^<asynchronous suspension>/ || line ~ /^\(elided /) next
       print line
       if (index(line, "════════════════════") == 1 && !index(line, "EXCEPTION CAUGHT BY")) {
