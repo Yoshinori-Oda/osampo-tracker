@@ -4,6 +4,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:integration_test/integration_test.dart';
 import 'package:test_tracking_01/database/app_database.dart';
 import 'package:test_tracking_01/main.dart' as app;
+import 'package:test_tracking_01/models/move_method.dart';
 import 'package:test_tracking_01/models/recording_session.dart';
 import 'package:test_tracking_01/providers/tracking_providers.dart';
 import 'package:test_tracking_01/views/save_or_discard_page.dart';
@@ -154,7 +155,8 @@ void main() {
     // 履歴タブに保存されたことを確認する
     await tester.tap(find.text('履歴'));
     await tester.pumpAndSettle();
-    expect(find.textContaining('アクティビティ'), findsOneWidget);
+    // 実機/シミュレータの履歴には既存のセッションも並ぶため、部分一致ではなく既定名で特定する
+    expect(find.text(defaultSessionName(startedAt, MoveMethod.walk)), findsOneWidget);
 
     await binding.convertFlutterSurfaceToImage();
     await tester.pumpAndSettle();

@@ -211,6 +211,8 @@ Future<_SaveInput?> _showSaveConfirmDialog(
                     labelText: 'セッション名',
                     // 既定名は移動手段で変わるため、選択に合わせてヒント文字も追従させる
                     hintText: defaultSessionName(sessionStartedAt, selectedMethod),
+                    // 既定名は長く1行だと省略されてしまうため、折り返して全体を見せる
+                    hintMaxLines: 2,
                     floatingLabelBehavior: FloatingLabelBehavior.always,
                     border: const OutlineInputBorder(),
                   ),
