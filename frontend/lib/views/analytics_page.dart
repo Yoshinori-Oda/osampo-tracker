@@ -1,4 +1,5 @@
 import 'dart:math';
+import 'package:fl_chart/fl_chart.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:holiday_jp/holiday_jp.dart' as holiday_jp;
@@ -82,7 +83,9 @@ class AnalyticsPage extends ConsumerWidget {
                     // graph mode selection tab
                     _buildGraphHeader(ref, selection, notifier),
                     const SizedBox(height: 12),
-                    _buildBarChart(data.chartPoints, selection.metricType, selection.period),
+                    selection.period == AnalyticsPeriod.all
+                      ? _buildCumulativeLineChart(data.chartPoints, selection.metricType)
+                      : _buildBarChart(data.chartPoints, selection.metricType, selection.period),
                     const SizedBox(height: 24),
 
                     // main summary
@@ -206,6 +209,114 @@ Widget _buildBarChart(List<ChartBarDataPoint> points, MetricType metricType, Ana
               )
             );
           }).toList()
+        )
+      )
+    )
+  );
+}
+
+// cumulative line chart (for all period)
+// chartPoints holds one running total per completed session (sorted by startedAt),
+// so x = session index and y = cumulative value.
+Widget _buildCumulativeLineChart(List<ChartBarDataPoint> points, MetricType metricType) {
+  if (points.isEmpty) {
+    return const Card(
+      child: SizedBox(height: 120, child: Center(child: Text('データがありません'))),
+    );
+  }
+
+  final spots = points.asMap().entries
+    .map((entry) => FlSpot(entry.key.toDouble(), entry.value.value))
+    .toList();
+  final maxValue = points.last.value;
+  final unit = metricType == MetricType.distance ? 'km' : 'h';
+  // show about 4 date labels on the x axis regardless of the number of sessions
+  final labelInterval = max(1, ((points.length - 1) / 3).ceil()).toDouble();
+
+  return Card(
+    elevation: 1.5,
+    child: Padding(
+      padding: const EdgeInsets.only(left: 8, right: 20, top: 16, bottom: 8),
+      child: SizedBox(
+        height: 180,
+        child: LineChart(
+          LineChartData(
+            minX: 0,
+            maxX: max(1, points.length - 1).toDouble(),
+            minY: 0,
+            maxY: maxValue > 0 ? maxValue * 1.1 : 1,
+            gridData: FlGridData(
+              show: true,
+              drawVerticalLine: false,
+              getDrawingHorizontalLine: (value) => FlLine(
+                color: Colors.grey.shade200,
+                strokeWidth: 1
+              )
+            ),
+            titlesData: FlTitlesData(
+              topTitles: const AxisTitles(sideTitles: SideTitles(showTitles: false)),
+              rightTitles: const AxisTitles(sideTitles: SideTitles(showTitles: false)),
+              bottomTitles: AxisTitles(
+                sideTitles: SideTitles(
+                  showTitles: true,
+                  reservedSize: 24,
+                  interval: labelInterval,
+                  getTitlesWidget: (value, meta) {
+                    final index = value.toInt();
+                    if (value != index || index < 0 || index >= points.length) {
+                      return const SizedBox.shrink();
+                    }
+                    return SideTitleWidget(
+                      meta: meta,
+                      child: Text(
+                        points[index].label,
+                        style: TextStyle(fontSize: 10, color: Colors.grey.shade700)
+                      )
+                    );
+                  }
+                )
+              ),
+              leftTitles: AxisTitles(
+                sideTitles: SideTitles(
+                  showTitles: true,
+                  reservedSize: 40,
+                  getTitlesWidget: (value, meta) {
+                    if (value == meta.max) return const SizedBox.shrink();
+                    return Text(
+                      meta.formattedValue,
+                      style: const TextStyle(fontSize: 10, color: Colors.grey)
+                    );
+                  }
+                )
+              )
+            ),
+            borderData: FlBorderData(show: false),
+            lineTouchData: LineTouchData(
+              touchTooltipData: LineTouchTooltipData(
+                getTooltipItems: (touchedSpots) => touchedSpots.map((spot) {
+                  final point = points[spot.x.toInt()];
+                  return LineTooltipItem(
+                    '${point.label}\n${point.value.toStringAsFixed(1)} $unit',
+                    const TextStyle(color: Colors.white, fontSize: 12, fontWeight: FontWeight.bold)
+                  );
+                }).toList()
+              )
+            ),
+            lineBarsData: [
+              LineChartBarData(
+                spots: spots,
+                color: Colors.blueAccent,
+                barWidth: 2.5,
+                isStrokeCapRound: true,
+                // dots are only useful while the number of sessions is small
+                dotData: FlDotData(show: points.length <= 30),
+                belowBarData: BarAreaData(
+                  show: true,
+                  color: Colors.blueAccent.withValues(alpha: 0.15)
+                )
+              )
+            ]
+          )
         )
       )
     )
