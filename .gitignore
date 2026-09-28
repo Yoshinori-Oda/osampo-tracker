@@ -5,3 +5,9 @@ Thumbs.db
 # Editor
 .idea/
 *.iml
+
+# Claude Code
+# git worktree での作業場所 (yoda-container/docs/worktree.md)
+.claude/worktrees/
+# 個人ごとの Claude Code 設定 (共有する設定は .claude/settings.json に書く)
+.claude/settings.local.json

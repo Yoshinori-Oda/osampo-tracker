@@ -285,6 +285,15 @@ GPSが未確定/不正確な状態(アプリ起動直後・屋内・電波不良
     「既知の落とし穴」参照)
 
 ### git
+- **コード変更はgit worktree(`.claude/worktrees/<作業名>/`)で隔離して作業する**。ローカルmainが
+  origin/mainより先行していることがあるので、`git worktree add .claude/worktrees/<作業名> -b <ブランチ名> main`
+  でローカルmainから作り、`EnterWorktree(path=...)`で入る。手順・ホスト側のgit要件(2.48以上)・
+  後片付けは`yoda-container/docs/worktree.md`を参照
+- worktreeの作業結果はホスト側でそのworktreeのディレクトリを開いてテスト・ビルドする。
+  worktreeごとに依存・生成物が別になるため、最初に`frontend`で`flutter pub get`(テーブル定義を
+  変えた場合は`dart run build_runner build`も)を実行してもらう。backendの`docker compose`は
+  ディレクトリ名から同じプロジェクト名(`backend`)になるので、メインのチェックアウトと
+  worktreeで同時に起動しない
 - commitメッセージはconventionalルールを継承する
 - 1PR1目的を基本とし、無関係な変更を混在させない
 - 現状は個人開発のため、レビュー承認は必須にしない(セルフマージ可)。複数人での開発に移行した場合はこのルールを見直す
