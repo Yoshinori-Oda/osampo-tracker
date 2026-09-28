@@ -259,18 +259,22 @@ Widget _buildCumulativeLineChart(List<ChartBarDataPoint> points, MetricType metr
               bottomTitles: AxisTitles(
                 sideTitles: SideTitles(
                   showTitles: true,
-                  reservedSize: 24,
+                  reservedSize: 36,
                   interval: labelInterval,
                   getTitlesWidget: (value, meta) {
                     final index = value.toInt();
                     if (value != index || index < 0 || index >= points.length) {
                       return const SizedBox.shrink();
                     }
+                    // split into year / month-day so that the label stays narrow enough
+                    // to be centered on the tick without overflowing at the right edge
+                    final date = points[index].date;
                     return SideTitleWidget(
                       meta: meta,
                       child: Text(
-                        points[index].label,
-                        style: TextStyle(fontSize: 10, color: Colors.grey.shade700)
+                        '${date.year}\n${date.month}/${date.day}',
+                        textAlign: TextAlign.center,
+                        style: TextStyle(fontSize: 10, height: 1.2, color: Colors.grey.shade700)
                       )
                     );
                   }
