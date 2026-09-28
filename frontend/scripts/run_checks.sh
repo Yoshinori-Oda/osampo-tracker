@@ -150,12 +150,19 @@ echo "steps: $STEPS"
 echo "log dir: $RUN_DIR"
 
 # ---- 実行環境 ----------------------------------------------------------------
-GIT_BRANCH="$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo '?')"
-GIT_COMMIT="$(git rev-parse --short HEAD 2>/dev/null || echo '?')"
-if [[ -n "$(git status --porcelain 2>/dev/null)" ]]; then
-  GIT_DIRTY="あり"
+# gitが使えない場合(コンテナ側で作ったworktreeをホストから開いていて、.gitの参照先パスが
+# ホストに存在しない等)は「なし」と誤表示せず、取得失敗であることとその理由を残す
+if GIT_STATUS_OUTPUT="$(git status --porcelain 2>&1)"; then
+  GIT_BRANCH="$(git rev-parse --abbrev-ref HEAD)"
+  GIT_COMMIT="$(git rev-parse --short HEAD)"
+  if [[ -n "$GIT_STATUS_OUTPUT" ]]; then
+    GIT_DIRTY="あり"
+  else
+    GIT_DIRTY="なし"
+  fi
+  GIT_INFO="\`$GIT_BRANCH\` / \`$GIT_COMMIT\` (未コミットの変更: $GIT_DIRTY)"
 else
-  GIT_DIRTY="なし"
+  GIT_INFO="取得失敗 ($(printf '%s' "$GIT_STATUS_OUTPUT" | head -n 1))"
 fi
 FLUTTER_VERSION="$(flutter --version 2>&1 | head -n 1)"
 
@@ -226,13 +233,35 @@ else
 fi
 
 # ---- SUMMARY.md --------------------------------------------------------------
+# flutter test / flutter drive のログから "EXCEPTION CAUGHT BY ..." のブロックを抜き出す(最大5件)。
+# 長いスタックトレースはフレームワーク内部の行を落とし、プロジェクトのテストコード
+# (test/・integration_test/)を指すフレームだけ残す(失敗箇所の行番号が分かれば十分なため)。
+# macOS標準のawk(BSD awk)でも動くよう、罫線文字は正規表現の繰り返しを使わず固定文字列で判定する
+extract_test_failures() {
+  awk '
+    index($0, "EXCEPTION CAUGHT BY") { inblock = 1; blocks++; if (blocks > 5) exit }
+    inblock {
+      line = $0
+      sub(/^flutter: /, "", line)
+      if (line ~ /^#[0-9]+ / && line !~ /test\/[^ ]*\.dart/) next
+      if (line ~ /^<asynchronous suspension>/ || line ~ /^\(elided /) next
+      print line
+      if (index(line, "════════════════════") == 1 && !index(line, "EXCEPTION CAUGHT BY")) {
+        inblock = 0
+        print ""
+      }
+    }
+    END { if (blocks == 0) print "(EXCEPTION CAUGHTのブロックなし。ログ末尾/全文を参照)" }
+  ' "$1"
+}
+
 SUMMARY="$RUN_DIR/SUMMARY.md"
 {
   echo "# ホスト側チェック結果: $STATUS_LABEL"
   echo
   echo "- run_id: \`$RUN_ID\`"
   echo "- 実行日時: $(date '+%Y-%m-%d %H:%M:%S %z')"
-  echo "- ブランチ / コミット: \`$GIT_BRANCH\` / \`$GIT_COMMIT\` (未コミットの変更: $GIT_DIRTY)"
+  echo "- ブランチ / コミット: $GIT_INFO"
   echo "- Flutter: $FLUTTER_VERSION"
   [[ " $STEPS " == *" e2e "* ]] && echo "- E2Eデバイス: \`$DEVICE_ID\`"
   if [[ ${#TEST_TARGETS[@]} -gt 0 ]]; then
@@ -257,15 +286,17 @@ SUMMARY="$RUN_DIR/SUMMARY.md"
     echo '```'
   fi
 
-  if [[ -f "$RUN_DIR/test.log" ]]; then
+  for step in test e2e; do
+    [[ -f "$RUN_DIR/$step.log" ]] || continue
     echo
-    echo "## flutter test の結果"
+    echo "## $step のテスト結果"
     echo
     echo '```text'
-    # 失敗したテスト名と最終行(All tests passed! / Some tests failed.)
-    grep -E '\[E\]$|All tests passed|Some tests failed' "$RUN_DIR/test.log" || tail -n 5 "$RUN_DIR/test.log"
+    # 失敗したテスト名と最終行(All tests passed! / Some tests failed.)。
+    # flutter driveの出力は行頭に"flutter: "が付くが、行末/部分一致で拾えるようにしてある
+    grep -E '\[E\]$|All tests passed|Some tests failed' "$RUN_DIR/$step.log" || tail -n 5 "$RUN_DIR/$step.log"
     echo '```'
-  fi
+  done
 
   if [[ -d "$RUN_DIR/screenshots" ]]; then
     echo
@@ -279,11 +310,19 @@ SUMMARY="$RUN_DIR/SUMMARY.md"
 
   printf '%s' "$RESULTS" | while IFS='|' read -r step label code secs; do
     [[ "$label" == FAILED ]] || continue
+    if [[ "$step" == test || "$step" == e2e ]]; then
+      echo
+      echo "## $step の失敗の詳細"
+      echo
+      echo '```text'
+      extract_test_failures "$RUN_DIR/$step.log"
+      echo '```'
+    fi
     echo
     echo "## $step のログ末尾 (失敗)"
     echo
     echo '```text'
-    tail -n 60 "$RUN_DIR/$step.log"
+    tail -n 30 "$RUN_DIR/$step.log"
     echo '```'
   done
 } > "$SUMMARY"
