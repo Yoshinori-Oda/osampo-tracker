@@ -44,6 +44,8 @@ Claude Code がこのプロジェクトで作業する際のコンテキスト�
               save_or_discard_dialog.dartは収録停止後の保存/破棄ダイアログで、
               通常の停止フローと権限エラーによる強制停止フローの両方から使う共通部品。
               duration_format.dartは経過時間/時刻表示の共通フォーマッタ
+              elevation_chart_data.dartはセッション詳細画面の高度プロファイルグラフ用のデータ変換
+              (X軸はポイント順ではなくrecordedAtの経過分。軸ラベルはHH:mm)
         - Android: アンドロイド端末設定用ディレクトリ
         - iOS: iOS端末設定用ディレクトリ
         - integration_test/: `flutter drive`によるE2Eシナリオ(スクリーンショット取得含む)。
