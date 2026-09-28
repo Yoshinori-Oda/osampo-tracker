@@ -8,7 +8,7 @@ import '../database/app_database.dart'; // Drift DBのモデルクラス
 import '../providers/tracking_providers.dart'; // trackPointsBySessionIdProvider があるファイル
 
 /// セッション詳細画面
-class SessionDetailView extends ConsumerStatefulWidget {
+class SessionDetailView extends StatelessWidget {
   final Session session;
 
   const SessionDetailView({
@@ -17,10 +17,89 @@ class SessionDetailView extends ConsumerStatefulWidget {
   });
 
   @override
-  ConsumerState<SessionDetailView> createState() => _SessionDetailViewState();
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(
+        title: SessionDetailTitle(
+          name: session.name ?? 'アクティビティ詳細',
+          moveMethodLabel: '${session.moveMethod}',
+          startedAt: session.startedAt,
+        ),
+      ),
+      body: SessionDetailBody(
+        sessionId: session.id,
+        totalDistance: session.totalDistance,
+        durationSeconds: session.durationSeconds,
+        elevationGain: session.elevationGain,
+        maxAltitude: session.maxAltitude,
+        minAltitude: session.minAltitude,
+      ),
+    );
+  }
 }
 
-class _SessionDetailViewState extends ConsumerState<SessionDetailView> {
+/// セッション詳細のAppBarタイトル(セッション名 + 移動手段・開始日時)。
+/// 収録停止後の保存/破棄画面(save_or_discard_page.dart)でも、詳細画面と同じ見た目で使う。
+/// moveMethodLabelがnull(未選択)の場合は開始日時だけを表示する
+class SessionDetailTitle extends StatelessWidget {
+  final String name;
+  final String? moveMethodLabel;
+  final DateTime startedAt;
+
+  const SessionDetailTitle({
+    super.key,
+    required this.name,
+    required this.moveMethodLabel,
+    required this.startedAt,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final startedAtString = startedAt.toString().substring(0, 16);
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          name,
+          style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+        ),
+        Text(
+          moveMethodLabel != null
+              ? '$moveMethodLabel ・ $startedAtString'
+              : startedAtString,
+          style: const TextStyle(fontSize: 12, color: Colors.grey),
+        ),
+      ],
+    );
+  }
+}
+
+/// セッション詳細の本文(マップ・統計グリッド・高度プロファイル)。
+/// 保存済みの`Session`と収録停止直後の`RecordingSession`の両方から使えるよう、値で受け取る
+class SessionDetailBody extends ConsumerStatefulWidget {
+  final String sessionId;
+  final double totalDistance;
+  final int durationSeconds;
+  final double elevationGain;
+  final double? maxAltitude;
+  final double? minAltitude;
+
+  const SessionDetailBody({
+    super.key,
+    required this.sessionId,
+    required this.totalDistance,
+    required this.durationSeconds,
+    required this.elevationGain,
+    required this.maxAltitude,
+    required this.minAltitude,
+  });
+
+  @override
+  ConsumerState<SessionDetailBody> createState() => _SessionDetailBodyState();
+}
+
+class _SessionDetailBodyState extends ConsumerState<SessionDetailBody> {
   // マップの表示モード切り替え（false: スタート/ゴールのみ, true: 全トラックポイント）
   bool _showAllMarkers = false;
 
@@ -28,195 +107,178 @@ class _SessionDetailViewState extends ConsumerState<SessionDetailView> {
   Widget build(BuildContext context) {
     // 指定された sessionId に紐づくトラックポイントを取得
     final trackPointsAsync =
-        ref.watch(trackPointsBySessionIdProvider(widget.session.id));
+        ref.watch(trackPointsBySessionIdProvider(widget.sessionId));
 
     // 平均速度の計算 (km/h)
-    final double? avgSpeed = (widget.session. durationSeconds>= 5 &&
-            widget.session.totalDistance > 0)
-        ? (widget.session.totalDistance /
-            (widget.session.durationSeconds / 3600.0))
+    final double? avgSpeed = (widget.durationSeconds >= 5 &&
+            widget.totalDistance > 0)
+        ? (widget.totalDistance /
+            (widget.durationSeconds / 3600.0))
         : null;
 
     // 経過時間のフォーマット (HH:MM:SS)
-    final hours = widget.session.durationSeconds ~/ 3600;
-    final minutes = (widget.session.durationSeconds % 3600) ~/ 60;
-    final seconds = widget.session.durationSeconds % 60;
+    final hours = widget.durationSeconds ~/ 3600;
+    final minutes = (widget.durationSeconds % 3600) ~/ 60;
+    final seconds = widget.durationSeconds % 60;
     final timeString =
         '${hours.toString().padLeft(2, '0')}:${minutes.toString().padLeft(2, '0')}:${seconds.toString().padLeft(2, '0')}';
 
-    return Scaffold(
-      appBar: AppBar(
-        title: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(
-              widget.session.name ?? 'アクティビティ詳細',
-              style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
-            ),
-            Text(
-              '${widget.session.moveMethod} ・ ${widget.session.startedAt.toString().substring(0, 16)}',
-              style: const TextStyle(fontSize: 12, color: Colors.grey),
-            ),
-          ],
+    return trackPointsAsync.when(
+      data: (trackPoints) {
+        return SingleChildScrollView(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              // 1. マップ表示エリア（タブ切替ボタン付き）
+              SizedBox(
+                height: 300,
+                child: Stack(
+                  children: [
+                    _DetailMapView(
+                      trackPoints: trackPoints,
+                      showAllMarkers: _showAllMarkers,
+                    ),
+                    // マップ右上: マーカー表示モード切替タブ
+                    Positioned(
+                      top: 12,
+                      right: 12,
+                      child: Card(
+                        elevation: 4,
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(20),
+                        ),
+                        child: SegmentedButton<bool>(
+                          segments: const [
+                            ButtonSegment<bool>(
+                              value: false,
+                              label: Text('ルート'),
+                              icon: Icon(Icons.route, size: 16),
+                            ),
+                            ButtonSegment<bool>(
+                              value: true,
+                              label: Text('全ピン'),
+                              icon: Icon(Icons.pin_drop, size: 16),
+                            ),
+                          ],
+                          selected: {_showAllMarkers},
+                          onSelectionChanged: (Set<bool> newSelection) {
+                            setState(() {
+                              _showAllMarkers = newSelection.first;
+                            });
+                          },
+                          style: const ButtonStyle(
+                            visualDensity: VisualDensity.compact,
+                            tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                          ),
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+
+              const SizedBox(height: 16),
+
+              // 2. 6項目統計グリッド
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 16.0),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const Text(
+                      'アクティビティ統計',
+                      style: TextStyle(
+                        fontSize: 16,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                    const SizedBox(height: 12),
+                    GridView.count(
+                      crossAxisCount: 3,
+                      shrinkWrap: true,
+                      physics: const NeverScrollableScrollPhysics(),
+                      mainAxisSpacing: 10,
+                      crossAxisSpacing: 10,
+                      childAspectRatio: 1.3,
+                      children: [
+                        _StatCard(
+                          label: '移動距離',
+                          value:
+                              '${widget.totalDistance.toStringAsFixed(2)} km',
+                          icon: Icons.straighten,
+                        ),
+                        _StatCard(
+                          label: '移動時間',
+                          value: timeString,
+                          icon: Icons.timer,
+                        ),
+                        _StatCard(
+                          label: '平均速度',
+                          value: avgSpeed != null
+                              ? '${avgSpeed.toStringAsFixed(1)} km/h'
+                              : '--- km/h',
+                          icon: Icons.speed,
+                        ),
+                        _StatCard(
+                          label: '獲得標高',
+                          value:
+                              '${widget.elevationGain.toStringAsFixed(0)} m',
+                          icon: Icons.filter_hdr,
+                        ),
+                        _StatCard(
+                          label: '最高高度',
+                          value:
+                              '${widget.maxAltitude!.toStringAsFixed(0)} m',
+                          icon: Icons.arrow_upward,
+                        ),
+                        _StatCard(
+                          label: '最低高度',
+                          value:
+                              '${widget.minAltitude!.toStringAsFixed(0)} m',
+                          icon: Icons.arrow_downward,
+                        ),
+                      ],
+                    ),
+                  ],
+                ),
+              ),
+
+              const SizedBox(height: 24),
+
+              // 3. 最下部: 高度変化グラフ (fl_chart)
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 16.0),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const Text(
+                      '高度プロファイル',
+                      style: TextStyle(
+                        fontSize: 16,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                    const SizedBox(height: 12),
+                    _ElevationChart(trackPoints: trackPoints),
+                  ],
+                ),
+              ),
+
+              const SizedBox(height: 32),
+            ],
+          ),
+        );
+      },
+      loading: () => const Center(
+        child: Padding(
+          padding: EdgeInsets.all(48.0),
+          child: CircularProgressIndicator(),
         ),
       ),
-      body: trackPointsAsync.when(
-        data: (trackPoints) {
-          return SingleChildScrollView(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                // 1. マップ表示エリア（タブ切替ボタン付き）
-                SizedBox(
-                  height: 300,
-                  child: Stack(
-                    children: [
-                      _DetailMapView(
-                        trackPoints: trackPoints,
-                        showAllMarkers: _showAllMarkers,
-                      ),
-                      // マップ右上: マーカー表示モード切替タブ
-                      Positioned(
-                        top: 12,
-                        right: 12,
-                        child: Card(
-                          elevation: 4,
-                          shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(20),
-                          ),
-                          child: SegmentedButton<bool>(
-                            segments: const [
-                              ButtonSegment<bool>(
-                                value: false,
-                                label: Text('ルート'),
-                                icon: Icon(Icons.route, size: 16),
-                              ),
-                              ButtonSegment<bool>(
-                                value: true,
-                                label: Text('全ピン'),
-                                icon: Icon(Icons.pin_drop, size: 16),
-                              ),
-                            ],
-                            selected: {_showAllMarkers},
-                            onSelectionChanged: (Set<bool> newSelection) {
-                              setState(() {
-                                _showAllMarkers = newSelection.first;
-                              });
-                            },
-                            style: const ButtonStyle(
-                              visualDensity: VisualDensity.compact,
-                              tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                            ),
-                          ),
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-
-                const SizedBox(height: 16),
-
-                // 2. 6項目統計グリッド
-                Padding(
-                  padding: const EdgeInsets.symmetric(horizontal: 16.0),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      const Text(
-                        'アクティビティ統計',
-                        style: TextStyle(
-                          fontSize: 16,
-                          fontWeight: FontWeight.bold,
-                        ),
-                      ),
-                      const SizedBox(height: 12),
-                      GridView.count(
-                        crossAxisCount: 3,
-                        shrinkWrap: true,
-                        physics: const NeverScrollableScrollPhysics(),
-                        mainAxisSpacing: 10,
-                        crossAxisSpacing: 10,
-                        childAspectRatio: 1.3,
-                        children: [
-                          _StatCard(
-                            label: '移動距離',
-                            value:
-                                '${widget.session.totalDistance.toStringAsFixed(2)} km',
-                            icon: Icons.straighten,
-                          ),
-                          _StatCard(
-                            label: '移動時間',
-                            value: timeString,
-                            icon: Icons.timer,
-                          ),
-                          _StatCard(
-                            label: '平均速度',
-                            value: avgSpeed != null
-                                ? '${avgSpeed.toStringAsFixed(1)} km/h'
-                                : '--- km/h',
-                            icon: Icons.speed,
-                          ),
-                          _StatCard(
-                            label: '獲得標高',
-                            value:
-                                '${widget.session.elevationGain.toStringAsFixed(0)} m',
-                            icon: Icons.filter_hdr,
-                          ),
-                          _StatCard(
-                            label: '最高高度',
-                            value:
-                                '${widget.session.maxAltitude!.toStringAsFixed(0)} m',
-                            icon: Icons.arrow_upward,
-                          ),
-                          _StatCard(
-                            label: '最低高度',
-                            value:
-                                '${widget.session.minAltitude!.toStringAsFixed(0)} m',
-                            icon: Icons.arrow_downward,
-                          ),
-                        ],
-                      ),
-                    ],
-                  ),
-                ),
-
-                const SizedBox(height: 24),
-
-                // 3. 最下部: 高度変化グラフ (fl_chart)
-                Padding(
-                  padding: const EdgeInsets.symmetric(horizontal: 16.0),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      const Text(
-                        '高度プロファイル',
-                        style: TextStyle(
-                          fontSize: 16,
-                          fontWeight: FontWeight.bold,
-                        ),
-                      ),
-                      const SizedBox(height: 12),
-                      _ElevationChart(trackPoints: trackPoints),
-                    ],
-                  ),
-                ),
-
-                const SizedBox(height: 32),
-              ],
-            ),
-          );
-        },
-        loading: () => const Center(
-          child: Padding(
-            padding: EdgeInsets.all(48.0),
-            child: CircularProgressIndicator(),
-          ),
-        ),
-        error: (err, stack) => Center(
-          child: Padding(
-            padding: const EdgeInsets.all(16.0),
-            child: Text('トラックポイントの読み込みに失敗しました: $err'),
-          ),
+      error: (err, stack) => Center(
+        child: Padding(
+          padding: const EdgeInsets.all(16.0),
+          child: Text('トラックポイントの読み込みに失敗しました: $err'),
         ),
       ),
     );

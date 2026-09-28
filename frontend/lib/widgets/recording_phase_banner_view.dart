@@ -23,7 +23,7 @@ class RecordingPhaseBannerView extends ConsumerWidget {
     return Material(
       color: color,
       child: InkWell(
-        // stopping中(=保存/破棄が必要)のみタップで収録タブへ誘導し、ダイアログを再表示する
+        // stopping中(=保存/破棄が必要)のみタップで収録タブへ誘導し、保存/破棄画面を再表示する
         onTap: phase == RecordingPhase.stopping
           ? () => ref.read(trackingServiceProvider).resumePendingCompletion()
           : null,

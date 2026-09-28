@@ -9,7 +9,7 @@ import '../models/recording_session.dart';
 import '../models/move_method.dart';
 import '../models/location_banner.dart';
 import '../models/recording_phase.dart';
-import '../utils/save_or_discard_dialog.dart';
+import '../utils/save_or_discard_screen.dart';
 import '../utils/delete_conflict_dialog.dart' show navigatorKey, scaffoldMessengerKey;
 import '../utils/duration_format.dart';
 
@@ -303,11 +303,13 @@ class TrackingService {
     await _presentPendingCompletion();
   }
 
-  // stoppingに入った(=保存/破棄が必要になった)瞬間に呼ぶ。収録タブを見ていれば直接ダイアログ、
-  // そうでなければSnackBarで気づかせてから収録タブへ誘導する(タップで resumePendingCompletion)
+  // stoppingに入った(=保存/破棄が必要になった)瞬間に呼ぶ。収録タブを見ていれば直接保存/破棄画面、
+  // そうでなければSnackBarで気づかせてから収録タブへ誘導する(タップで resumePendingCompletion)。
+  // 保存/破棄画面が既に開いている場合(起動時リカバリのキューの次の1件)は、タブに関わらず
+  // その画面を次のセッションの画面へ差し替える
   Future<void> _presentPendingCompletion() async {
-    if (_getCurrentTabIndex() == _recordingTabIndex) {
-      await _showPendingCompletionDialog();
+    if (isSaveOrDiscardScreenOpen || _getCurrentTabIndex() == _recordingTabIndex) {
+      await _showPendingCompletionScreen();
       return;
     }
 
@@ -322,12 +324,12 @@ class TrackingService {
     );
   }
 
-  Future<void> _showPendingCompletionDialog() async {
+  Future<void> _showPendingCompletionScreen() async {
     final session = _session;
     if (session == null) return;
 
-    await showSaveOrDiscardDialog(
-      sessionStartedAt: session.startedAt,
+    await showSaveOrDiscardScreen(
+      session: session,
       infoMessage: _pendingCompletionInfoMessage,
       onDiscard: () => completeSession(doSave: false),
       onSave: (sessionName, moveMethod) => completeSession(
@@ -338,14 +340,14 @@ class TrackingService {
     );
   }
 
-  // バナー/収録タブのボタンから、保留中セッションの保存/破棄ダイアログを再度呼び出す
+  // 通常の停止直後、およびバナー/収録タブのボタンから、保留中セッションの保存/破棄画面を呼び出す
   Future<void> resumePendingCompletion() async {
     if (_phase != RecordingPhase.stopping || _session == null) return;
 
     if (_getCurrentTabIndex() != _recordingTabIndex) {
       _switchToRecordingTab();
     }
-    await _showPendingCompletionDialog();
+    await _showPendingCompletionScreen();
   }
 
   // 起動時に一度呼び、クラッシュ・強制終了等で保存/破棄されないまま残ったセッションを検出する。
@@ -700,31 +702,36 @@ class TrackingService {
     String? sessionName,
     MoveMethod? moveMethod
   }) async {
-    if (!isRecording) return;
+    final session = _session;
+    if (session == null) return;
+
+    // 保存/破棄の反映(repository側でリモート同期の完了まで待つため、通信状況次第で時間がかかる)を
+    // 待たずに、先に次の状態へ遷移する。反映待ちの間もstoppingのままだと、収録タブのボタン/バナーから
+    // 確定済みのセッションの保存/破棄画面を再度開けてしまうため。
+    // (反映前にアプリが落ちてもinProgressのまま残るだけなので、次回起動時のリカバリで拾える)
+    if (_recoveryQueue.isNotEmpty) {
+      // 起動時リカバリのキューに続きがあれば、idleへ戻さずそのまま次の1件をstoppingとして提示する
+      // (保存/破棄画面が開いていれば、ここで同期的に次のセッションの画面へ差し替わる)
+      _dequeueNextRecovery();
+    } else {
+      // reset recording states
+      _session = null;
+      _pendingCompletionInfoMessage = null;
+      _setPhase(RecordingPhase.idle);
+      _recordingSessionController.add(recordingSession);
+    }
 
     if (doSave) {
       // save
       await _repo.saveCompletedSession(
-        session: _session!,
+        session: session,
         name: sessionName!,
         moveMethod: moveMethod!,
         savedAt: DateTime.now(),
       );
     } else {
-      await _repo.deleteRecordingSession(session: _session!);
+      await _repo.deleteRecordingSession(session: session);
     }
-
-    // 起動時リカバリのキューに続きがあれば、idleへ戻さずそのまま次の1件をstoppingとして提示する
-    if (_recoveryQueue.isNotEmpty) {
-      _dequeueNextRecovery();
-      return;
-    }
-
-    // reset recording states
-    _session = null;
-    _pendingCompletionInfoMessage = null;
-    _setPhase(RecordingPhase.idle);
-    _recordingSessionController.add(recordingSession);
   }
 
   // for later update of session info
