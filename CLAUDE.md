@@ -169,6 +169,29 @@ GPSが未確定/不正確な状態(アプリ起動直後・屋内・電波不良
      いつでも再度ダイアログへ戻れるようにしてある(将来、起動時の既定タブを収録タブ以外に
      変更できるようにした場合に備えた導線。現状は常に収録タブから起動するため実質使われない)
 
+## 開発環境の方針 (コンテナ/ホストの役割分担) (重要)
+
+- **devcontainerにはFlutter SDKを導入しない**(fvmでコンテナ内にFlutterを入れる案は
+  2026-09-28に取り止めた)。コンテナ内では`flutter`/`dart`コマンドが使えない前提で作業すること。
+  `flutter analyze`/`flutter test`/`dart run build_runner build`/`flutter drive`/ビルドは
+  すべてホスト側で実行する
+- **テストを軸に開発を進める**。Claudeはコンテナ内で実行による動作確認ができないため:
+  - Claude: 実装と一緒に、その変更を検証するテスト(`test/`配下のユニット/ウィジェットテスト、
+    画面確認が必要なら`integration_test/`のシナリオ)を書く。ホストで実行してもらう
+    コマンドはコピペで実行できる完全な形で提示する
+  - ユーザー: ホスト側でテスト・静的解析を実行し、結果(失敗時はログ)をClaudeに渡す
+  - Claude: 結果・ログ・スクリーンショットを読んで修正する。**実行結果を確認するまで
+    「動作確認済み」とは言わない**
+- Driftの`*.g.dart`などコード生成物もホスト側の`build_runner`でしか更新できない。
+  テーブル定義を変えた場合は、生成コマンドの実行をユーザーに依頼すること
+- 2026-09-15〜09-28のdevcontainerは、誤った入れ子の`.devcontainer`定義から起動していたため
+  firewall・named volumeが効いていなかった(詳細: `yoda-container/docs/troubleshooting.md`の
+  「正規のdevcontainer定義で起動しているかの確認」)。**この期間に書かれた本ファイルの
+  記述のうち、コンテナ側の環境に依存するもの(コンテナ内のFlutterのパス、Dockerの可否等)は
+  正規コンテナでは当てはまらないことがある**。疑わしい記述を見つけたら正規コンテナで
+  裏付けを取ってから更新すること
+- `frontend/.fvm/`はfvm試行時の残骸(未追跡)。不要なのでホスト側で削除してよい
+
 ## 開発ルール
 
 ### コーディング規約
@@ -176,7 +199,8 @@ GPSが未確定/不正確な状態(アプリ起動直後・屋内・電波不良
 - Dartのインデントは2文字、SQLのインデントは4文字で行い、Dartではリスト項目の末尾にも`,`を入れる
 
 ### テスト
-- ユニットテストのフレームワーク等は未導入
+- 標準の`flutter_test`(`test/`配下、`flutter test`で実行)以外のテストフレームワーク・
+  モックライブラリは未導入。テストは「開発環境の方針」の通りホスト側で実行する
 - E2E実行は`scripts/run_e2e_tests.sh <run_id>`(デバイスは省略可。変える場合だけ末尾に
   `-d <device_id>`/`--device <device_id>`を足す)で行う。デバイスの決定順は
   `-d`指定 > `E2E_DEVICE_ID`環境変数 > スクリプト冒頭の`DEFAULT_DEVICE_ID`(各自の環境に
@@ -187,8 +211,8 @@ GPSが未確定/不正確な状態(アプリ起動直後・屋内・電波不良
   複数セッションでテストが前後してもrun_idで検索すれば取り違えない(`*.log`は`.gitignore`済み
   でコミット対象外)
 - E2E/画面確認は`integration_test`パッケージ + `flutter drive`で行う。Claude Code は
-  コンテナ内で動くためシミュレータ/実機を直接操作できず(`flutter devices`でも
-  Linux desktopしか見えない)、次の役割分担で運用する:
+  コンテナ内で動くためシミュレータ/実機を直接操作できず(そもそもコンテナにFlutterが
+  無い)、次の役割分担で運用する:
   - ユーザー: ホスト側で`flutter drive`を実行してテストシナリオを走らせる(実行と
     完了報告のみ担当)
   - Claude: シナリオ(`integration_test/*.dart`)のコード自体は書く。実行後は
@@ -263,7 +287,9 @@ GPSが未確定/不正確な状態(アプリ起動直後・屋内・電波不良
 - backendはDockerが必須。**このdevcontainer環境ではDockerデーモンに繋がらない**
   (`docker`/`docker-compose`のCLIはあるが、`docker ps`が
   `dial unix /var/run/docker.sock: no such file or directory`で失敗する)ため、
-  backendを起動できず、SQL変更は目視レビューに留まり実DBでの検証は常にホスト側に委ねる必要がある
+  backendを起動できず、SQL変更は目視レビューに留まり実DBでの検証は常にホスト側に委ねる必要がある。
+  (2026-09-16〜09-28は誤った入れ子のdevcontainer定義にdocker-in-dockerが入っていたため
+  コンテナ内でもDockerが使えていたが、正規のcompose経由のコンテナでは使えない)
 - iOSシミュレータの位置情報操作(Xcodeの`Features > Location`、`xcrun simctl location`)は
   macOSホスト専用の機能で、このLinuxコンテナには`xcrun`/`simctl`自体が存在せず実行できない。
   スクリプトやGPXファイルの作成はできるが、実行(位置の注入)は必ずホスト側で行うこと
@@ -314,7 +340,10 @@ GPSが未確定/不正確な状態(アプリ起動直後・屋内・電波不良
   `"dart.runPubGetOnPubspecChanges": "never"`を設定済みなので、devcontainer側/ホスト側
   どちらのVSCodeでも有効になっているか確認すること。原因切り分け時は、ホスト側で
   `grep -o '"rootUri": *"[^"]*flutter[^"]*"' .dart_tool/package_config.json`を実行し、
-  `rootUri`がホストパスかコンテナパスかを見ると早い
+  `rootUri`がホストパスかコンテナパスかを見ると早い。
+  (この不具合は誤った入れ子のdevcontainer定義で起動していた時期に、コンテナ内にFlutterが
+  あった状態で発生した。現在はコンテナにFlutterを入れない方針なので同じ経路では再発しない
+  はずだが、設定は念のため残しておく)
 - **Claude Codeがバックグラウンドジョブとして動作している場合、そのサンドボックスは
   上記のbind mount済みdevcontainerとは別の独立したgit cloneであることがある**(実際に
   発生: 作業ディレクトリが`docker-compose.yml`の`/workspace`と異なる`/workspaces/...`
@@ -331,6 +360,8 @@ GPSが未確定/不正確な状態(アプリ起動直後・屋内・電波不良
 
 ## よく使うコマンド
 
+backendの`docker compose`も含め、以下はすべてホスト側で実行する(コンテナにはFlutterが無い)。
+
 ```bash
 # 起動
 flutter run
@@ -340,6 +371,9 @@ dart run build_runner build
 
 # 静的解析
 flutter analyze
+
+# ユニット/ウィジェットテスト(frontendディレクトリで実行)
+flutter test
 
 # E2Eテスト実行(ホスト側でシミュレータ/実機起動後に実行。frontendディレクトリで実行)
 scripts/run_e2e_tests.sh <run_id>
