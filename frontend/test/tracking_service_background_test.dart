@@ -98,8 +98,10 @@ void main() {
     return service;
   }
 
-  // 購読の同期処理はフェーズ/ライフサイクル変化の後ろに非同期で積まれるため、落ち着くまで待つ
+  // 起動時の初期化(権限要求〜初回購読)の完了を待ち、さらにフェーズ/ライフサイクル変化の後ろに
+  // 非同期で積まれる購読の同期処理が落ち着くまで待つ
   Future<void> settle(TrackingService service) async {
+    await service.initialization;
     for (var i = 0; i < 5; i++) {
       await Future<void>.delayed(Duration.zero);
       await service.positionStreamSynced;

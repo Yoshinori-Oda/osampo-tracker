@@ -115,6 +115,12 @@ class TrackingService {
   bool get _needsBackgroundTracking =>
     _phase == RecordingPhase.starting || _phase == RecordingPhase.recording;
 
+  // 起動時の権限要求〜初回購読の完了
+  late final Future<void> _initialization;
+
+  @visibleForTesting
+  Future<void> get initialization => _initialization;
+
   @visibleForTesting
   Future<void> get positionStreamSynced => _streamSyncChain;
 
@@ -124,7 +130,7 @@ class TrackingService {
     required void Function() switchToRecordingTab
   }) : _getCurrentTabIndex = getCurrentTabIndex,
        _switchToRecordingTab = switchToRecordingTab {
-    _initTrackingStream();
+    _initialization = _initTrackingStream();
   }
 
   Future<bool> checkAndRequestPermission() async {
