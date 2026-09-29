@@ -22,7 +22,7 @@ class SessionDetailView extends StatelessWidget {
       appBar: AppBar(
         title: SessionDetailTitle(
           name: session.name ?? 'アクティビティ詳細',
-          moveMethodLabel: '${session.moveMethod}',
+          moveMethodLabel: session.moveMethod.label,
           startedAt: session.startedAt,
         ),
       ),
