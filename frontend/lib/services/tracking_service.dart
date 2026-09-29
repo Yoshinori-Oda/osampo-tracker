@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:math';
 import 'package:flutter/material.dart';
 import 'package:geolocator/geolocator.dart';
+import 'package:permission_handler/permission_handler.dart' as ph;
 import 'package:uuid/uuid.dart';
 import '../database/app_database.dart';
 import '../repositories/tracking_repository.dart';
@@ -12,6 +13,7 @@ import '../models/recording_phase.dart';
 import '../utils/save_or_discard_screen.dart';
 import '../utils/delete_conflict_dialog.dart' show navigatorKey, scaffoldMessengerKey;
 import '../utils/duration_format.dart';
+import 'location_stream_settings.dart';
 
 // 端末/アプリ側の設定が原因で位置情報が取れなくなっている状態
 enum _LocationPermissionTrouble { none, serviceDisabled, permissionDenied }
@@ -38,6 +40,17 @@ class TrackingService {
   static const Duration _startFallbackAgeLimit = Duration(seconds: 15);
 
   StreamSubscription<Position>? _positionStreamSubscription;
+  // 現在の購読がバックグラウンド継続用の設定(buildPositionStreamSettings(background: true))かどうか
+  bool _subscribedForBackground = false;
+  // アプリがバックグラウンド(hidden/paused)にいるか
+  bool _isAppInBackground = false;
+  // 購読の開始/停止/切り替えを直列化するためのチェーン(フェーズ変化とライフサイクル変化が
+  // 前後して呼ばれても、二重購読や停止漏れが起きないようにする)
+  Future<void> _streamSyncChain = Future.value();
+  // 位置情報の監視を(再)開始した時刻。サスペンドからの復帰直後に、止めていた間の空白を
+  // 「更新停止」としてバナー表示しないための起点
+  DateTime? _monitoringStartedAt;
+  bool _disposed = false;
   Position? _lastPosition;
   Position? _lastReceivedPosition;
 
@@ -90,7 +103,19 @@ class TrackingService {
   void _setPhase(RecordingPhase phase) {
     _phase = phase;
     _recordingPhaseController.add(phase);
+    // 収録の有無に合わせて購読設定を切り替える。権限エラー等で購読が止まっている場合に
+    // ここで勝手に再購読しないよう、購読していなければ開始しない(再開はrefreshLocationAvailabilityの役割)
+    _syncPositionStream(startIfStopped: false);
   }
+
+  // 収録中(開始処理中を含む)は、バックグラウンドに回っても記録を継続する設定で購読する。
+  // startingから切り替えるのは、Android 12以降はバックグラウンドからForeground Serviceを
+  // 起動できないため、ユーザーがRECを押した直後(確実にフォアグラウンドにいる時点)で起動しておくため
+  bool get _needsBackgroundTracking =>
+    _phase == RecordingPhase.starting || _phase == RecordingPhase.recording;
+
+  @visibleForTesting
+  Future<void> get positionStreamSynced => _streamSyncChain;
 
   TrackingService(
     this._repo, {
@@ -134,7 +159,17 @@ class TrackingService {
       return;
     }
 
-    await _startPositionStream();
+    await _requestNotificationPermission();
+    await _syncPositionStream(startIfStopped: true);
+  }
+
+  // Android 13以降は、収録中のForeground Serviceの常駐通知を表示するのに通知権限が必要
+  // (拒否されてもServiceは動くが、通知ドロワーに表示されなくなる)。geolocatorは要求しないため自前で要求する
+  Future<void> _requestNotificationPermission() async {
+    if (defaultTargetPlatform != TargetPlatform.android) return;
+    try {
+      await ph.Permission.notification.request();
+    } catch (_) {}
   }
 
   // 許可ダイアログを出さずに、現在のサービス/権限の状態のみを判定する
@@ -152,28 +187,85 @@ class TrackingService {
     return _LocationPermissionTrouble.none;
   }
 
-  Future<void> _startPositionStream() async {
+  // アプリのライフサイクル変化時に呼ぶ(main_page.dartのWidgetsBindingObserverから)。
+  // 収録中でなければバックグラウンドでは購読を止めてサスペンドし、復帰時に再開する
+  Future<void> handleAppLifecycleState(AppLifecycleState state) async {
+    switch (state) {
+      case AppLifecycleState.hidden:
+      case AppLifecycleState.paused:
+        _isAppInBackground = true;
+        await _syncPositionStream(startIfStopped: false);
+      case AppLifecycleState.resumed:
+        _isAppInBackground = false;
+        await refreshLocationAvailability();
+      case AppLifecycleState.inactive:
+      case AppLifecycleState.detached:
+        // inactiveは権限ダイアログ/コントロールセンター表示中などにも来るため、購読は維持する
+        break;
+    }
+  }
+
+  // 現在のフェーズとライフサイクルに合わせて、位置情報ストリームの購読を開始/停止/切り替えする。
+  // startIfStopped=falseの場合、購読していない状態からは開始しない(権限エラーでストリームが
+  // 止まっている時などに、フェーズ変化をきっかけに勝手に再購読しないため)
+  Future<void> _syncPositionStream({required bool startIfStopped}) {
+    final op = _streamSyncChain.then((_) => _doSyncPositionStream(startIfStopped: startIfStopped));
+    _streamSyncChain = op.catchError((_) {});
+    return _streamSyncChain;
+  }
+
+  Future<void> _doSyncPositionStream({required bool startIfStopped}) async {
+    // dispose後に、それ以前に積まれていた同期処理が購読し直してしまわないようにする
+    if (_disposed) return;
+    final background = _needsBackgroundTracking;
+
+    if (_isAppInBackground && !background) {
+      await _stopPositionStream();
+      return;
+    }
+
+    if (_positionStreamSubscription != null) {
+      if (_subscribedForBackground == background) return;
+      await _stopPositionStream();
+    } else if (!startIfStopped) {
+      return;
+    }
+
+    await _startPositionStream(background: background);
+  }
+
+  Future<void> _stopPositionStream() async {
+    final subscription = _positionStreamSubscription;
+    _positionStreamSubscription = null;
+    await subscription?.cancel();
+
+    // 購読していない間は監視タイマーも止める(復帰時の_startPositionStreamで再開する)
+    _bannerWatchdogTimer?.cancel();
+    _bannerWatchdogTimer = null;
+  }
+
+  Future<void> _startPositionStream({required bool background}) async {
     if (_positionStreamSubscription != null) return;
+    _monitoringStartedAt = DateTime.now();
 
-    // get initial position (取れなくても以後はストリームからの更新を待つだけで良い)
-    try {
-      final initialPosition = await Geolocator.getCurrentPosition(
-        locationSettings: const LocationSettings(
-          accuracy: LocationAccuracy.high,
-          timeLimit: Duration(seconds: 1)
-        )
-      );
-      _onPositionReceived(initialPosition);
-    } catch (_) {}
+    // get initial position (取れなくても以後はストリームからの更新を待つだけで良い)。
+    // 収録開始時の切り替えではstartRecording側が自前で取得するため省略する
+    if (!background) {
+      try {
+        final initialPosition = await Geolocator.getCurrentPosition(
+          locationSettings: const LocationSettings(
+            accuracy: LocationAccuracy.high,
+            timeLimit: Duration(seconds: 1)
+          )
+        );
+        _onPositionReceived(initialPosition);
+      } catch (_) {}
+    }
 
-    // get-location setting
-    const locationSettings = LocationSettings(
-      accuracy: LocationAccuracy.high,
-      distanceFilter: 0
-    );
-
+    // 待機中にフェーズが変わっていた場合は、_setPhaseが後ろに積んだ同期処理で設定が合わせ直される
+    _subscribedForBackground = background;
     _positionStreamSubscription = Geolocator.getPositionStream(
-      locationSettings: locationSettings
+      locationSettings: buildPositionStreamSettings(background: background)
     ).listen(
       (Position position) async {
         _onPositionReceived(position);
@@ -201,7 +293,7 @@ class TrackingService {
     _recomputeBanner();
 
     if (trouble == _LocationPermissionTrouble.none) {
-      await _startPositionStream();
+      await _syncPositionStream(startIfStopped: true);
       return;
     }
 
@@ -277,8 +369,14 @@ class TrackingService {
       return const LocationBannerState(kind: LocationBannerKind.neverAcquired);
     }
 
+    // サスペンドからの復帰直後は、止めていた間の空白を「更新停止」扱いしないよう、
+    // 監視を再開した時刻の方が新しければそちらを起点にする(経過時間の表示は実際の最終受信から)
     final elapsed = DateTime.now().difference(_lastGoodPositionAt!);
-    if (elapsed >= _staleThreshold) {
+    final monitoringStartedAt = _monitoringStartedAt;
+    final staleBase = monitoringStartedAt != null && monitoringStartedAt.isAfter(_lastGoodPositionAt!)
+      ? monitoringStartedAt
+      : _lastGoodPositionAt!;
+    if (DateTime.now().difference(staleBase) >= _staleThreshold) {
       return LocationBannerState(kind: LocationBannerKind.stalled, elapsedSinceLastGood: elapsed);
     }
 
@@ -758,6 +856,7 @@ class TrackingService {
   }
 
   void dispose() {
+    _disposed = true;
     _positionStreamSubscription?.cancel();
     _timer?.cancel();
     _bannerWatchdogTimer?.cancel();

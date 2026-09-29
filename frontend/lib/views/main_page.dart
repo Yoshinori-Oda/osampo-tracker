@@ -40,10 +40,11 @@ class _MainPageState extends ConsumerState<MainPage> with WidgetsBindingObserver
     // バックグラウンドから復帰した際にも同期しておく
     if (state == AppLifecycleState.resumed) {
       ref.read(repositoryProvider).requestSync();
-      // 設定アプリでの位置情報サービス/権限の変更はストリームのonErrorだけでは検知できないため、
-      // 復帰の度に明示的に再チェックする
-      ref.read(trackingServiceProvider).refreshLocationAvailability();
     }
+    // 収録中でなければバックグラウンドで位置情報の購読を止め、復帰時に再開する。
+    // 復帰時は、設定アプリでの位置情報サービス/権限の変更がストリームのonErrorだけでは
+    // 検知できないため、明示的な再チェック(refreshLocationAvailability)もここから行われる
+    ref.read(trackingServiceProvider).handleAppLifecycleState(state);
   }
 
   @override
