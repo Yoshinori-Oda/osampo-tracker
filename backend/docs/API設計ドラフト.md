@@ -145,3 +145,53 @@ url: http://localhost:8080/api
             - nullはmax_altitude, min_altitude, altitudeのみ許す
         - 万が一同時に同じIDのセッションが登録されようとした時のために、登録処理はINSERT ... ON CONFLICT DO NOTHINGで行い、DO NOTHINGで挿入が0件の場合は手順8からやり直す
         - セッションとトラックポイントは1つのトランザクションで登録する
+
+- PATCH /users/{user_id}/sessions/{session_id}
+    パスパラメーター:
+        user_id: usersテーブルに登録されているid
+        session_id: 修正対象のsessionのid
+    header:
+        Authorization: Bearer <token>
+        Content-Type: application/json
+    body:
+        {
+            "name": "近所のお散歩",   (<= 100文字)
+            "move_method": "walk",   (walk, run, bicycle, car, train, plane, shipのいずれか)
+            "is_favorite": true   (bool)
+        }
+
+    レスポンス:
+        header:
+            Content-Type: application/json
+        body:
+            {
+                "updated_at": "2026-10-01T17:30:00.000Z"   (Time Stamp (UTC))
+            }
+
+    処理:
+        1. リクエストのbodyサイズが10MBを超える場合: 413を返す
+        2. トークンがない、あるいは無効だった場合: 401を返す
+        3. header の認証情報に紐づいたユーザーが管理者でなく、かつパスパラメーターのuser_id と異なる場合: 403 を返す
+        4. パスパラメーターのuser_idが存在しない場合: 404を返す
+        5. Content-Typeがapplication/jsonでない場合: 415を返す
+        6. updated_atに現在のサーバー時刻(UTC)を入力する
+        7. validationを行って不正があった場合: 422を返す
+        8. sessionsテーブルをidとパスパラメーターのuser_idの両方で絞って検索し、該当するレコードがない場合: 404("code": "session_not_found")を返す
+        9. 該当レコードのdeleted_atがnullでない場合: 409("code": "deleted")を返す
+        10. 特定項目(\*2)が完全に一致する場合: レスポンスbodyのupdated_atを当該レコードのupdated_atに変更して200を返す
+        11. 特定項目(\*2)が1つでも異なる場合: 特定項目(\*2)とupdated_atのみを更新して200を返す
+    備考
+        - bodyは特定項目(\*2)の3項目全てを必須とする(端末側で変更した項目を追跡しなくて済むようにするため。現行実装も3項目を全て送っている)
+        - 特定項目(\*2)以外の項目がbodyに含まれる場合は422を返す(Pydanticのextra="forbid"。端末のバグで不変の項目を変えようとしても気づけるようにするため)
+        - 他ユーザーのsessionのidを指定した場合も、存在しない場合と区別せず404を返す(403を返すと、そのidのsessionを誰かが持っていることが分かってしまうため)
+        - 3項目全てを毎回送るので、同じPATCHが2回届いても結果は変わらない。レスポンスが返らない間にローカルで編集が増えても、次のPATCHで最新の値が送られる
+        - updated_atはPOSTと同様にsessionのupdated_at用であり、last_synced_atは後続のGETリクエストから更新する
+        - validationチェックの項目は以下の通り
+            - session_idがUUID型である
+            - 特定項目(\*2)の3項目が全て存在し、いずれもnullでない
+            - nameが1文字以上100文字以内である
+            - move_methodがwalk, run, bicycle, car, train, plane, shipのいずれかである
+        - 端末側の約束:
+            - 409("deleted")の場合: 削除と編集の競合ダイアログを出し、「残す」を選んだらrestoreを呼ぶ
+            - 404("session_not_found")の場合: 削除後にパージ済みなので、競合ダイアログを出し、「残す」を選んだら登録のPOSTを呼ぶ(restoreは経由しない)
+        - 競合の検出は削除済みかどうかのみで、他端末での編集は上書きする(楽観ロックは入れない)。同一ユーザーが複数端末で同時に操作することは想定しないため(docs/design/sync.md)。複数人が同じデータを編集する本案件では、updated_atを照合して409を返す楽観ロックの要否を検討する必要がある
