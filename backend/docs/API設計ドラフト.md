@@ -106,7 +106,7 @@ url: http://localhost:8080/api
         - パージ期間は90日。パージはdeleted_at(削除した日時)がパージ期間より古いtombstoneを物理削除するので、
           last_synced_atがパージ期間以内であれば、それ以降の削除のtombstoneは必ず残っている(パージの実行頻度には左右されない)
         - request_existence_checkがtrueの場合、パージ済みの削除はレスポンスに含まれない可能性がある。
-          これを補うための突き合わせは{後から考えるエンドポイント}で行う
+          これを補うための突き合わせは`POST /users/{user_id}/sessions/existence-check`で行う
         - sessionsの並び順はstarted_atの昇順
         - track_pointsの並び順はrecorded_atの昇順
         - ユーザー機能が実装されていない間はトークンの検証をスルーする形とする
@@ -311,3 +311,54 @@ url: http://localhost:8080/api
         - 404("session_not_found")はパージ済みで、復活させる対象が残っていないことを表す
         - パージと同時に実行された場合は、トランザクションでどちらか一方が先に確定する。restoreが先ならdeleted_atがnullになり
           パージの対象から外れ、パージが先ならrestoreは404("session_not_found")になる
+
+- POST /users/{user_id}/sessions/existence-check
+    パスパラメーター:
+        user_id: usersテーブルに登録されているid
+    header:
+        Authorization: Bearer <token>
+        Content-Type: application/json
+    body:
+        {
+            "session_ids": [
+                "11111111-1111-1111-1111-111111111111",   (UUID)
+                ...
+            ]
+        }
+
+    レスポンス:
+        header:
+            Content-Type: application/json
+        body:
+            {
+                "missing_session_ids": [
+                    "11111111-1111-1111-1111-111111111111",   (UUID)
+                    ...
+                ]
+            }
+
+    処理:
+        1. リクエストのbodyサイズが10MBを超える場合: 413を返す
+        2. トークンがない、あるいは無効だった場合: 401を返す
+        3. header の認証情報に紐づいたユーザーが管理者でなく、かつパスパラメーターのuser_id と異なる場合: 403 を返す
+        4. パスパラメーターのuser_idが存在しない場合: 404("code": "user_not_found")を返す
+        5. Content-Typeがapplication/jsonでない場合: 415を返す
+        6. validationを行って不正があった場合: 422を返す
+        7. session_idsのうち、当該ユーザーの生きている(deleted_atがnullの)sessionとして存在するものを検索する
+        8. session_idsから7の結果を除いたものをmissing_session_idsとして200で返す
+    備考
+        - GETでrequest_existence_checkがtrueだった場合に、パージ済みで差分に含まれなかった削除を補うためのエンドポイント
+        - DBは変更しない。それでもGETではなくPOSTにするのは、IDが多いとクエリ文字列の長さの上限にかかるため
+          (GETでbodyを送ることはHTTPで意味が定められておらず、使わないのが一般的)
+        - tombstoneのsessionも「存在しない」として返す。突き合わせの後にクライアントはlast_synced_atを更新するので、
+          この時点で返さないと、そのtombstoneは今後の差分取得で送られない可能性があるため。
+          通常tombstoneは直前のGETで届くが、GETと突き合わせの間に他端末で削除された場合などはここに来る
+        - 他ユーザーのsessionのIDも「存在しない」として返す(PATCH・DELETEの404と同様、他ユーザーのデータの有無を伝えないため)
+        - 返すのは存在しないIDのみ。削除の漏れは通常ごく少数なので、レスポンスが小さくなる
+        - IDの数に個別の上限は設けず、bodyの10MB制限のみとする(約25万件に相当し、個人のsession数では十分)
+        - 重複したIDは1つにまとめて扱う。空の配列の場合は空のmissing_session_idsを200で返す
+        - missing_session_idsの並び順は保証しない
+        - サーバーは突き合わせの状態を持たない(どのGETに続く突き合わせかは関知しない)
+        - validationチェックの項目は以下の通り
+            - session_idsが存在し、配列である
+            - session_idsの要素が全てUUID型である
