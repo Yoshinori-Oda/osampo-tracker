@@ -1,5 +1,8 @@
 # osampo-trackerバックエンドサーバーAPI設計ドラフト
 
+このドキュメントにはサーバー側の挙動のみを記載する。クライアント(frontend)側で必要な対応は
+`frontend/docs/ユーザー機能追加に伴う変更予定.md`を参照。
+
 ## server
 url: http://localhost:8080/api
 
@@ -44,7 +47,7 @@ url: http://localhost:8080/api
                     },
                     {   (削除されたレコードの場合、last_synced_atがnot absentの時のみ)
                         "id": "11111111-1111-1111-1111-111111111111",   (UUID)
-                        "deleted_at": "2026-09-30T15:00:00.000Z"
+                        "deleted_at": "2026-09-30T15:00:00.000Z"   (Time Stamp (UTC)、削除した日時)
                     },
                     ...
                 ]
@@ -59,15 +62,16 @@ url: http://localhost:8080/api
         6. synced_atに現在のサーバー時刻(UTC)を入力する
         7. last_synced_atがabsent:　該当ユーザーのsessionのうちdeleted_atがnullのものを全て拾ってくる
            not absent: 該当ユーザーのsessionのうちupdated_atがlast_synced_atよりも後のものを全て拾ってくる
-        8. last_synced_atがnot absentかつ(パージ期間 - パージ頻度)以上: request_existence_checkをtrueにする
+        8. last_synced_atがnot absentかつ(サーバー時刻 - パージ期間)より前: request_existence_checkをtrueにする
         9. json形式に変換して200で返す
     備考:
-        - 現行実装のp_synced_atは廃止(サーバー時間を基準とするため、自分がpushしたsessionも返ってくるが同じ内容で上書きしても問題ない)
-        - 現行実装ではパージ期間は90日、パージ頻度は1日である
-        - request_existence_checkがtrueのときはパージ期間を超過した(tombstoneがない削除済みの)セッションを確認する処理を行う(詳細は{後から考えるエンドポイント}を参照)
+        - 現行実装のp_sync_timeは廃止する(サーバー時刻を基準とするため)。リクエストした端末自身がpushしたsessionもレスポンスに含まれる
+        - パージ期間は90日。パージはdeleted_at(削除した日時)がパージ期間より古いtombstoneを物理削除するので、
+          last_synced_atがパージ期間以内であれば、それ以降の削除のtombstoneは必ず残っている(パージの実行頻度には左右されない)
+        - request_existence_checkがtrueの場合、パージ済みの削除はレスポンスに含まれない可能性がある。
+          これを補うための突き合わせは{後から考えるエンドポイント}で行う
         - sessionsの並び順はstarted_atの昇順
         - track_pointsの並び順はrecorded_atの昇順
-        - パージ期間以上の再同期について、last_synced_atを更新するのは削除済みのsessionsを突き合わせた後とする(失敗した時に再チェックができなくなるため)
         - ユーザー機能が実装されていない間はトークンの検証をスルーする形とする
         - ページングは未定(このドキュメントが正式版になるまでには決定予定)
 
@@ -128,7 +132,6 @@ url: http://localhost:8080/api
                     特定項目(\*2)が完全に一致する場合: レスポンスbodyのupdated_atを当該レコードのupdated_atに変更して200を返す
         9. 登録処理を行い201を返す
     備考
-        - updated_atはsessionのupdated_at用であり、last_synced_atは後続のGETリクエストから更新する
         - リモートDBには終了したセッションのみを記録する方針なので、ended_atはnon-nullとする
         - uvicornとFastAPIは仕様上リクエストサイズの制限がないため、不正なリクエストによって処理が停滞しないようにbodyに10MBの制限をかける
         - 特定項目\*1: started_at, ended_at, total_distance, duration_seconds, elevation_gain, max_altitude, min_altitude
@@ -184,14 +187,41 @@ url: http://localhost:8080/api
         - bodyは特定項目(\*2)の3項目全てを必須とする(端末側で変更した項目を追跡しなくて済むようにするため。現行実装も3項目を全て送っている)
         - 特定項目(\*2)以外の項目がbodyに含まれる場合は422を返す(Pydanticのextra="forbid"。端末のバグで不変の項目を変えようとしても気づけるようにするため)
         - 他ユーザーのsessionのidを指定した場合も、存在しない場合と区別せず404を返す(403を返すと、そのidのsessionを誰かが持っていることが分かってしまうため)
-        - 3項目全てを毎回送るので、同じPATCHが2回届いても結果は変わらない。レスポンスが返らない間にローカルで編集が増えても、次のPATCHで最新の値が送られる
-        - updated_atはPOSTと同様にsessionのupdated_at用であり、last_synced_atは後続のGETリクエストから更新する
+        - 3項目全てを毎回受け取るので、同じPATCHが2回届いても結果は変わらない
         - validationチェックの項目は以下の通り
             - session_idがUUID型である
             - 特定項目(\*2)の3項目が全て存在し、いずれもnullでない
             - nameが1文字以上100文字以内である
             - move_methodがwalk, run, bicycle, car, train, plane, shipのいずれかである
-        - 端末側の約束:
-            - 409("deleted")の場合: 削除と編集の競合ダイアログを出し、「残す」を選んだらrestoreを呼ぶ
-            - 404("session_not_found")の場合: 削除後にパージ済みなので、競合ダイアログを出し、「残す」を選んだら登録のPOSTを呼ぶ(restoreは経由しない)
+        - 409("deleted")はパージ前のtombstone、404("session_not_found")はパージ済み(または他ユーザーのもの・未登録)を表す。
+          前者は復活の対象がまだ残っており、後者は残っていない
         - 競合の検出は削除済みかどうかのみで、他端末での編集は上書きする(楽観ロックは入れない)。同一ユーザーが複数端末で同時に操作することは想定しないため(docs/design/sync.md)。複数人が同じデータを編集する本案件では、updated_atを照合して409を返す楽観ロックの要否を検討する必要がある
+
+- DELETE /users/{user_id}/sessions/{session_id}
+    パスパラメーター:
+        user_id: usersテーブルに登録されているid
+        session_id: 削除対象のsessionのid
+    header:
+        Authorization: Bearer <token>
+    body: なし
+
+    レスポンス:
+        body: なし
+
+    処理:
+        1. トークンがない、あるいは無効だった場合: 401を返す
+        2. user_id、またはsession_idの書式が不正な場合: 422を返す
+        3. header の認証情報に紐づいたユーザーが管理者でなく、かつパスパラメーターのuser_id と異なる場合: 403 を返す
+        4. パスパラメーターのuser_idが存在しない場合: 404を返す
+        5. sessionsテーブルをidとパスパラメーターのuser_idの両方で絞って検索し、該当するレコードがない場合: 404("code": "session_not_found")を返す
+        6. 該当レコードのdeleted_atがnullでない場合: 何も変更せずに204を返す
+        7. 該当レコードのdeleted_atとupdated_atに現在のサーバー時刻(UTC)を入力して204を返す
+    備考
+        - deleted_atは削除した日時(サーバー時刻)を表す。現行実装のようにクライアントがパージ予定日時を計算して送ることはしない
+        - パージ(worker)はdeleted_atがパージ期間(90日)より古いtombstoneを物理削除する
+        - 既にtombstoneの場合にdeleted_atを更新しないのは、パージまでの期間が延びることと、他端末に同じtombstoneが差分として再度届くことを避けるため
+        - 該当レコードがない場合(パージ済み・未登録・他ユーザーのもの)を204ではなく404にするのは、PATCHと判定・エラーコードを揃え、
+          将来ログを実装した際に「削除した」のか「元から無かった」のかを区別できるようにするため。
+          どちらの場合もサーバーにそのsessionが存在しない状態になるので、同じDELETEを繰り返してもサーバーの状態は変わらない(冪等)
+        - tombstoneになってもsessionとtrack_pointsのデータは残す(復活と、POSTの再送時の比較に必要なため)
+        - 他端末での編集より後に届いた削除は、その編集を上書きして削除する(PATCHと同様、楽観ロックは入れない)
