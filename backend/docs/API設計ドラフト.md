@@ -6,6 +6,32 @@
 ## server
 url: http://localhost:8080/api
 
+## 共通事項
+
+### エラーレスポンス
+- 4xx・5xxのレスポンスbodyは全て以下の形式で返す。FastAPIが既定で返すエラー(バリデーションエラーの422、
+  存在しないパスへの404など)も例外ハンドラーでこの形式に揃える
+    ```
+    {
+        "code": "session_not_found",   (エラーの種類。クライアントはこれで処理を分岐する)
+        "message": "..."   (人が読むための説明。クライアントは分岐に使わない)
+    }
+    ```
+- 同じステータスコードでも意味が異なる場合があるため、クライアントが処理を分岐する必要があるエラーには必ず`code`を付ける。
+  特に404は「ユーザーが存在しない」(`user_not_found`)と「セッションが存在しない」(`session_not_found`)とで
+  クライアントが取るべき対応が異なる(後者は再登録・削除完了として扱えるが、前者や存在しないパスへのリクエストは
+  処理を止めるべき)ので、`code`で区別する
+
+### codeの一覧
+| code | ステータス | 意味 |
+| --- | --- | --- |
+| `user_not_found` | 404 | パスパラメーターのuser_idのユーザーが存在しない |
+| `session_not_found` | 404 | 当該ユーザーのsessionとして存在しない(パージ済み・未登録・他ユーザーのもの) |
+| `id_conflicted` | 409 | 登録しようとしたidが別のsessionと衝突している |
+| `deleted` | 409 | 対象のsessionが削除済み(tombstone)で、編集内容と競合している |
+
+(401・403・413・415・422等のcodeはエラーハンドリングの実装時に決める)
+
 ## endpoints
 - GET /users/{user_id}/sessions?last_synced_at=<日時>
     パスパラメーター:
@@ -57,7 +83,7 @@ url: http://localhost:8080/api
         1. トークンがない、あるいは無効だった場合: 401を返す
         2. user_id、またはlast_synced_atの書式が不正な場合、またはlast_synced_atがサーバー時刻より大きい場合: 422を返す
         3. header の認証情報に紐づいたユーザーが管理者でなく、かつuser_id と異なる場合: 403 を返す
-        4. user_idが存在しない場合: 404を返す
+        4. user_idが存在しない場合: 404("code": "user_not_found")を返す
         5. Acceptにapplication/jsonがない場合: 406を返す
         6. synced_atに現在のサーバー時刻(UTC)を入力する
         7. last_synced_atがabsent:　該当ユーザーのsessionのうちdeleted_atがnullのものを全て拾ってくる
@@ -117,7 +143,7 @@ url: http://localhost:8080/api
         1. リクエストのbodyサイズが10MBを超える場合: 413を返す
         2. トークンがない、あるいは無効だった場合: 401を返す
         3. header の認証情報に紐づいたユーザーが管理者でなく、かつパスパラメーターのuser_id と異なる場合: 403 を返す
-        4. パスパラメーターのuser_idが存在しない場合: 404を返す
+        4. パスパラメーターのuser_idが存在しない場合: 404("code": "user_not_found")を返す
         5. Content-Typeがapplication/jsonでない場合: 415を返す
         6. updated_atに現在のサーバー時刻(UTC)を入力する
         7. validationを行って不正があった場合: 422を返す
@@ -175,7 +201,7 @@ url: http://localhost:8080/api
         1. リクエストのbodyサイズが10MBを超える場合: 413を返す
         2. トークンがない、あるいは無効だった場合: 401を返す
         3. header の認証情報に紐づいたユーザーが管理者でなく、かつパスパラメーターのuser_id と異なる場合: 403 を返す
-        4. パスパラメーターのuser_idが存在しない場合: 404を返す
+        4. パスパラメーターのuser_idが存在しない場合: 404("code": "user_not_found")を返す
         5. Content-Typeがapplication/jsonでない場合: 415を返す
         6. updated_atに現在のサーバー時刻(UTC)を入力する
         7. validationを行って不正があった場合: 422を返す
@@ -212,7 +238,7 @@ url: http://localhost:8080/api
         1. トークンがない、あるいは無効だった場合: 401を返す
         2. user_id、またはsession_idの書式が不正な場合: 422を返す
         3. header の認証情報に紐づいたユーザーが管理者でなく、かつパスパラメーターのuser_id と異なる場合: 403 を返す
-        4. パスパラメーターのuser_idが存在しない場合: 404を返す
+        4. パスパラメーターのuser_idが存在しない場合: 404("code": "user_not_found")を返す
         5. sessionsテーブルをidとパスパラメーターのuser_idの両方で絞って検索し、該当するレコードがない場合: 404("code": "session_not_found")を返す
         6. 該当レコードのdeleted_atがnullでない場合: 何も変更せずに204を返す
         7. 該当レコードのdeleted_atとupdated_atに現在のサーバー時刻(UTC)を入力して204を返す
@@ -225,3 +251,52 @@ url: http://localhost:8080/api
           どちらの場合もサーバーにそのsessionが存在しない状態になるので、同じDELETEを繰り返してもサーバーの状態は変わらない(冪等)
         - tombstoneになってもsessionとtrack_pointsのデータは残す(復活と、POSTの再送時の比較に必要なため)
         - 他端末での編集より後に届いた削除は、その編集を上書きして削除する(PATCHと同様、楽観ロックは入れない)
+
+- POST /users/{user_id}/sessions/{session_id}/restore
+    パスパラメーター:
+        user_id: usersテーブルに登録されているid
+        session_id: 削除を取り消す対象のsessionのid
+    header:
+        Authorization: Bearer <token>
+        Content-Type: application/json
+    body:
+        {
+            "name": "近所のお散歩",   (<= 100文字)
+            "move_method": "walk",   (walk, run, bicycle, car, train, plane, shipのいずれか)
+            "is_favorite": true   (bool)
+        }
+
+    レスポンス:
+        header:
+            Content-Type: application/json
+        body:
+            {
+                "updated_at": "2026-10-01T17:30:00.000Z"   (Time Stamp (UTC))
+            }
+
+    処理:
+        1. リクエストのbodyサイズが10MBを超える場合: 413を返す
+        2. トークンがない、あるいは無効だった場合: 401を返す
+        3. header の認証情報に紐づいたユーザーが管理者でなく、かつパスパラメーターのuser_id と異なる場合: 403 を返す
+        4. パスパラメーターのuser_idが存在しない場合: 404("code": "user_not_found")を返す
+        5. Content-Typeがapplication/jsonでない場合: 415を返す
+        6. updated_atに現在のサーバー時刻(UTC)を入力する
+        7. validationを行って不正があった場合: 422を返す(項目はPATCHと同じ)
+        8. sessionsテーブルをidとパスパラメーターのuser_idの両方で絞って検索し、該当するレコードがない場合: 404("code": "session_not_found")を返す
+        9. 該当レコードのdeleted_atがnullでない場合: deleted_atをnullにし、特定項目(\*2)とupdated_atを更新して200を返す
+        10. 該当レコードのdeleted_atがnullの場合(復活済み): PATCHの手順10・11と同じ
+            特定項目(\*2)が完全に一致する場合: レスポンスbodyのupdated_atを当該レコードのupdated_atに変更して200を返す
+            特定項目(\*2)が1つでも異なる場合: 特定項目(\*2)とupdated_atのみを更新して200を返す
+    備考
+        - restoreは削除と編集が競合した際に、編集内容を残して削除を取り消すためのエンドポイント。
+          呼ばれる時点でクライアントには未反映の編集内容が必ずあるので、削除の取り消しと編集内容(特定項目\*2)の反映を1回のリクエストで行う
+          (2回に分けると、間で失敗した場合に「復活したが編集は反映されていない」状態になりうるため)
+        - bodyの扱い(3項目全て必須、それ以外の項目は422)はPATCHと同じ
+        - 処理名で終わるパスはリソースではなく操作を表すため、メソッドはPOSTとする
+        - 既に復活済みの場合も200を返すので、同じrestoreを繰り返してもサーバーの状態は変わらない(冪等)。
+          restoreが成功したがレスポンスが返らずに再送された場合や、他端末が先に復活させていた場合が該当する
+        - 復活したsessionはupdated_atが更新されるので、tombstoneを受け取ってローカルから削除していた他端末にも、
+          次のGETで生きているsessionとして全データ(track_pointsを含む)が届き、復活する
+        - 404("session_not_found")はパージ済みで、復活させる対象が残っていないことを表す
+        - パージと同時に実行された場合は、トランザクションでどちらか一方が先に確定する。restoreが先ならdeleted_atがnullになり
+          パージの対象から外れ、パージが先ならrestoreは404("session_not_found")になる
