@@ -6,6 +6,9 @@ Thumbs.db
 .idea/
 *.iml
 
+# タスク候補の管理用(ブランチ・worktreeによらずメインのチェックアウトに1つだけ置く。CLAUDE.mdの「タスク候補の管理」)
+/タスク候補.md
+
 # Claude Code
 # git worktree での作業場所 (yoda-container/docs/worktree.md)
 .claude/worktrees/

@@ -55,8 +55,10 @@ Claude Code がこのプロジェクトで作業する際のコンテキスト�
   - initdb.sql: スキーマ・ストアドファンクション(register_session_with_points / fetch_remote_sessions)の定義
   - cron/: 削除tombstoneの長周期パージ用cronコンテナ
   - docker-compose.yml: db / postgrest / cron の3サービス構成
+  - docs/: FastAPIへの置き換えに向けたAPI設計・バックエンド構成の詳細設計(下記「ドキュメント索引」)
 - docs: 設計・経緯・計画(下記「ドキュメント索引」)
 - frontend: Flutterによるモバイルアプリ本体(`flutter create`の出力から開発)
+  - docs/: ユーザー機能追加に伴うfrontendの変更予定(下記「ドキュメント索引」)
   - lib/
     - database/: Drift定義(ローカルSQLite)
     - repositories/: リモート同期ロジック(push/pull/競合解決)
@@ -93,6 +95,18 @@ Claude Code がこのプロジェクトで作業する際のコンテキスト�
 | `docs/pitfalls.md` | 下記「既知の落とし穴」の症状・原因の詳細 | 該当箇所を触る、似た不具合を調べる |
 | `docs/history.md` | 開発環境・運用ルールの変遷(fvm取り止め、正規でないdevcontainerの期間等) | 古い記述・ブランチの前提を疑う時 |
 | `docs/plans/` | ロードマップ・ユーザー機能・リリース・本案件の検討メモ | 機能の追加・取捨や今後の計画を相談する |
+| `backend/docs/API設計ドラフト.md` | 新しいAPIサーバー(FastAPI)のエンドポイント・エラー形式・認証と権限 | 新しいAPIを実装する、APIの仕様を変える |
+| `backend/docs/バックエンド構成.md` | FastAPIへの置き換えの詳細設計(実装方針・マイグレーション・DBロール・パージ・テスト) | `backend/`の置き換え作業をする |
+| `frontend/docs/ユーザー機能追加に伴う変更予定.md` | 新しいAPIに合わせてfrontendで必要になる変更 | `repositories/`を新しいAPIに切り替える |
+
+## タスク候補の管理
+
+- 着手前のタスク候補はメインのチェックアウト直下の`/workspace/project/osampo-tracker/タスク候補.md`に箇条書きで
+  溜めている。`.gitignore`済みでgitの管理外(ブランチやworktreeで内容が変わらないようにするため)。
+  worktreeで作業中もこの絶対パスのファイルを読み書きする
+- ユーザーに「次に何をやるか」を聞かれたら、このファイルを読み、上記「キャッチアップの状況と方針」の優先順位と
+  `docs/plans/roadmap.md`の日程から優先度の高いものを選んで、理由を添えて提示する。判断できなければ一覧を提示する
+- 作業中に見つかった後回しのタスク・ユーザーが挙げたタスクはこのファイルに追記し、完了したものは「完了」へ移す
 
 ## 開発環境の方針 (コンテナ/ホストの役割分担) (重要)
 
