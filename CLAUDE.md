@@ -101,14 +101,16 @@ Claude Code がこのプロジェクトで作業する際のコンテキスト�
 
 ## タスク候補の管理
 
-- 着手前のタスク候補はメインのチェックアウト直下の`/workspace/project/osampo-tracker/タスク候補.md`に箇条書きで
-  溜めている。`.gitignore`済みでgitの管理外(ブランチやworktreeで内容が変わらないようにするため)。
-  worktreeで作業中もこの絶対パスのファイルを読み書きする
+- 着手前のタスク候補は、orphanブランチ`tasks`の`task_candidates.md`に箇条書きで溜めている。`tasks`ブランチは
+  専用のworktree`.claude/worktrees/task-management/`に常駐させ、**mainにはmergeせず、worktreeの後片付け
+  (`git worktree remove`)の対象にもしない**(作業ブランチやworktreeによって内容が変わらないようにするため)
+- 読むときは絶対パス`/workspace/project/osampo-tracker/.claude/worktrees/task-management/task_candidates.md`を使う
+- 編集するときは、worktreeに隔離されたセッションでは`EnterWorktree(path=<上記worktreeのパス>)`で移ってから編集し、
+  `tasks`ブランチにcommitする。元の作業に戻るときは`EnterWorktree(path=<作業中のworktreeのパス>)`で入り直す
 - ユーザーに「次に何をやるか」を聞かれたら、このファイルを読み、上記「キャッチアップの状況と方針」の優先順位と
   `docs/plans/roadmap.md`の日程から優先度の高いものを選んで、理由を添えて提示する。判断できなければ一覧を提示する
 - 作業中に見つかった後回しのタスク・ユーザーが挙げたタスクはこのファイルに追記し、完了したものは「完了」へ移す
-- バックグラウンドジョブ(worktreeに隔離されたセッション)からはメインのチェックアウトに書き込めない。その場合は
-  追記・変更したい内容を報告に書いてユーザーに反映してもらう
+- worktreeが消えていた場合は`git worktree add .claude/worktrees/task-management tasks`で作り直す
 
 ## 開発環境の方針 (コンテナ/ホストの役割分担) (重要)
 
