@@ -7,5 +7,4 @@ host_check_logs/
 docs/
 cron/
 db/
-initdb.sql
 test_data.sh

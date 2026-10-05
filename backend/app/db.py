@@ -4,7 +4,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_asyn
 
 from app.config import settings
 
-engine = create_async_engine(settings.database_url, pool_pre_ping=True)
+engine = create_async_engine(settings.app_database_url, pool_pre_ping=True)
 
 # commit後に属性へアクセスしても再読み込み(=暗黙のDBアクセス)が起きないようにする。
 # 非同期では暗黙のDBアクセスがエラーになるため

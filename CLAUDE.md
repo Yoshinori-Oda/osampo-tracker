@@ -56,7 +56,10 @@ Claude Code がこのプロジェクトで作業する際のコンテキスト�
     routers/・schemas/・services/・models/: レイヤ。詳細は`backend/docs/バックエンド構成.md`)
   - tests/: pytest
   - pyproject.toml・uv.lock: 依存パッケージ(uv)。Dockerfile: api・worker共通のイメージ
-  - initdb.sql: 現行のスキーマ・ストアドファンクション(register_session_with_points / fetch_remote_sessions)の定義
+  - alembic.ini・migrations/: Alembicのマイグレーション。0001は旧initdb.sqlのスキーマ・ストアドファンクション
+    (register_session_with_points / fetch_remote_sessions)をそのまま写したもの
+  - db/init/: DBコンテナの初回起動時に実行するスクリプト(ロール・テスト用データベース・拡張機能・権限)
+  - db/seed.sql: 開発用のダミーデータ(テストユーザー`1111...`とセッション)
   - cron/: 削除tombstoneの長周期パージ用cronコンテナ(workerへ移行予定)
   - docker-compose.yml: db / api / worker / mailpit / postgrest / cron。DBの接続情報は`backend/.env`(コミットしない)
   - docs/: FastAPIへの置き換えに向けたAPI設計・バックエンド構成の詳細設計(下記「ドキュメント索引」)
@@ -229,7 +232,14 @@ scripts/run_e2e_tests.sh <run_id> -d <device_id>
 
 # backend起動(backendディレクトリで実行。事前にbackend/.envが必要: backend/docs/バックエンド構成.md)
 docker compose up -d --build
-# backendのテスト(dbが起動している状態で)
+# マイグレーション(DBのボリュームを作り直した後や、マイグレーションを追加した後に。開発用とテスト用の両方)
+docker compose run --rm api alembic upgrade head
+docker compose run --rm api alembic -x db=test upgrade head
+# モデル(app/models/)とDBのスキーマに差分が無いことの確認
+docker compose run --rm api alembic check
+# 開発用のダミーデータを入れる(テーブルの所有者のロールで実行する)
+docker compose exec -T db psql -U osampo_migrator -d location_db < db/seed.sql
+# backendのテスト(dbが起動していて、テスト用のデータベースにマイグレーション済みの状態で)
 docker compose run --rm api pytest
 # 依存パッケージを変えたらuv.lockを更新する(コンテナ内ではできないのでホストで)
 docker run --rm -v "$PWD":/app -w /app ghcr.io/astral-sh/uv:python3.12-bookworm-slim uv lock

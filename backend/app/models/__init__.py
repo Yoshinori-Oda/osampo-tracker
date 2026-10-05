@@ -1,7 +1,11 @@
-"""テーブルの定義(SQLAlchemyのORM)。SpringのJPAの@Entityに相当する。"""
+"""テーブルの定義(SQLAlchemyのORM)。SpringのJPAの@Entityに相当する。
 
-from sqlalchemy.orm import DeclarativeBase
+Alembicがmetadataから全てのテーブルを参照できるよう、モデルはここで全てimportする。
+"""
 
+from app.models.base import Base
+from app.models.track_point import TrackPoint
+from app.models.tracking_session import TrackingSession
+from app.models.user import User
 
-class Base(DeclarativeBase):
-    """全てのモデルの基底クラス。Alembicの自動生成はこのmetadataを参照する。"""
+__all__ = ["Base", "TrackPoint", "TrackingSession", "User"]

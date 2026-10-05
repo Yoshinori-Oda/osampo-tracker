@@ -1,6 +1,6 @@
 # 同期・削除の設計
 
-関連: `backend/initdb.sql`・`backend/cron/`・`frontend/lib/repositories/`
+関連: `backend/migrations/versions/0001_initial_schema.py`(旧`backend/initdb.sql`)・`backend/cron/`・`frontend/lib/repositories/`
 
 このアプリは「複数端末・同一ユーザーでの同時操作は想定しない」前提で、シンプルな
 pull型差分同期(`updated_at`ベース)を採用している。設計の要点:
