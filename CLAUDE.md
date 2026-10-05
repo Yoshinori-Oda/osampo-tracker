@@ -51,10 +51,14 @@ Claude Code がこのプロジェクトで作業する際のコンテキスト�
 
 ## ディレクトリ構成
 
-- backend: Dockerで動かすPostgreSQL + PostgRESTのバックエンドAPI
-  - initdb.sql: スキーマ・ストアドファンクション(register_session_with_points / fetch_remote_sessions)の定義
-  - cron/: 削除tombstoneの長周期パージ用cronコンテナ
-  - docker-compose.yml: db / postgrest / cron の3サービス構成
+- backend: Dockerで動かすバックエンド。PostgREST + cronからFastAPI(api + worker)へ置き換え中で、移行が終わるまで両方が動く
+  - app/: FastAPIのアプリ本体(config.py: 設定、db.py: DB接続、main.py: アプリ、worker.py: 定期実行、
+    routers/・schemas/・services/・models/: レイヤ。詳細は`backend/docs/バックエンド構成.md`)
+  - tests/: pytest
+  - pyproject.toml・uv.lock: 依存パッケージ(uv)。Dockerfile: api・worker共通のイメージ
+  - initdb.sql: 現行のスキーマ・ストアドファンクション(register_session_with_points / fetch_remote_sessions)の定義
+  - cron/: 削除tombstoneの長周期パージ用cronコンテナ(workerへ移行予定)
+  - docker-compose.yml: db / api / worker / mailpit / postgrest / cron。DBの接続情報は`backend/.env`(コミットしない)
   - docs/: FastAPIへの置き換えに向けたAPI設計・バックエンド構成の詳細設計(下記「ドキュメント索引」)
 - docs: 設計・経緯・計画(下記「ドキュメント索引」)
 - frontend: Flutterによるモバイルアプリ本体(`flutter create`の出力から開発)
@@ -223,6 +227,10 @@ scripts/run_checks.sh <run_id> all
 # E2Eのみ(デバイスを既定と変える場合のみ -d)
 scripts/run_e2e_tests.sh <run_id> -d <device_id>
 
-# backend起動(backendディレクトリで実行)
-docker compose up -d
+# backend起動(backendディレクトリで実行。事前にbackend/.envが必要: backend/docs/バックエンド構成.md)
+docker compose up -d --build
+# backendのテスト(dbが起動している状態で)
+docker compose run --rm api pytest
+# 依存パッケージを変えたらuv.lockを更新する(コンテナ内ではできないのでホストで)
+docker run --rm -v "$PWD":/app -w /app ghcr.io/astral-sh/uv:python3.12-bookworm-slim uv lock
 ```

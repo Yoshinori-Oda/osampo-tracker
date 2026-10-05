@@ -6,6 +6,15 @@ Thumbs.db
 .idea/
 *.iml
 
+# backend (Python)
+# 秘密情報を含むのでコミットしない (項目は backend/docs/バックエンド構成.md)
+backend/.env
+backend/.venv/
+backend/host_check_logs/
+__pycache__/
+.pytest_cache/
+.ruff_cache/
+
 # Claude Code
 # git worktree での作業場所 (yoda-container/docs/worktree.md)
 .claude/worktrees/

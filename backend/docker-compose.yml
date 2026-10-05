@@ -1,30 +1,77 @@
+# DBの接続情報は同じディレクトリの.env(コミットしない)から読み込む。項目はbackend/docs/バックエンド構成.mdを参照
 services:
   db:
     image: postgis/postgis:16-3.4
     container_name: location_postgis
     platform: linux/amd64
     environment:
-      POSTGRES_USER: authenticator
-      POSTGRES_PASSWORD: hoge
-      POSTGRES_DB: location_db
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB}
     ports:
       - "5432:5432"
     volumes:
       - postgis_data:/var/lib/postgresql/data
       - ./initdb.sql:/docker-entrypoint-initdb.d/initdb.sql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
 
+  api:
+    build: .
+    command: ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8080", "--reload"]
+    env_file: .env
+    ports:
+      - "8080:8080"
+    volumes:
+      # 開発中はソースコードをbind mountし、--reloadで変更を反映する
+      - ./app:/app/app
+      - ./tests:/app/tests
+    depends_on:
+      db:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8080/health')"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+  # apiと同じイメージで起動コマンドだけを変える。ジョブが重複しないよう1つだけ起動する
+  worker:
+    build: .
+    command: ["python", "-m", "app.worker"]
+    env_file: .env
+    volumes:
+      - ./app:/app/app
+    depends_on:
+      db:
+        condition: service_healthy
+    restart: unless-stopped
+
+  # 開発用のSMTP受信サーバー。送信したメールはhttp://localhost:8025で確認できる(外部には送らない)
+  mailpit:
+    image: axllent/mailpit
+    ports:
+      - "8025:8025"
+
+  # 同期APIをapiに移植するまで残す(フロントの接続先がまだPostgRESTのため)
   postgrest:
     image: postgrest/postgrest
     ports:
       - "3000:3000"
     environment:
-      PGRST_DB_URI: "postgres://authenticator:hoge@db:5432/location_db"
+      PGRST_DB_URI: "postgres://${POSTGRES_USER}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB}"
       PGRST_DB_SCHEMA: "public"
       PGRST_DB_ANON_ROLE: "web_anon"
       PGRST_DB_CHANNEL_ENABLED: "true"
     depends_on:
-      - db
+      db:
+        condition: service_healthy
 
+  # パージ処理をworkerに移すまで残す
   cron:
     build: ./cron
     container_name: location_cron
