@@ -30,6 +30,14 @@ for db in "$POSTGRES_DB" "$POSTGRES_TEST_DB"; do
     psql -v ON_ERROR_STOP=1 --username "$POSTGRES_USER" --dbname "$db" \
         -v migrator_user="$MIGRATOR_DB_USER" \
         -v app_user="$APP_DB_USER" <<'EOSQL'
+-- postgis/postgisイメージの10_postgis.shが開発用のデータベースに入れる、使わない拡張機能を削除する
+-- (トポロジー・米国の住所ジオコーダー)。postgis_topologyはsearch_pathにtopologyスキーマを追加し、
+-- Alembicがそのテーブルをモデルに無いテーブルとして検出するため。テスト用のデータベースと環境を揃える意味もある
+DROP EXTENSION IF EXISTS postgis_tiger_geocoder;
+DROP EXTENSION IF EXISTS fuzzystrmatch;
+DROP EXTENSION IF EXISTS postgis_topology;
+SELECT format('ALTER DATABASE %I RESET search_path', current_database()) \gexec
+
 -- 拡張機能の作成にはスーパーユーザーの権限が必要なので、Alembicではなくここで作る
 CREATE EXTENSION IF NOT EXISTS postgis;
 CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
