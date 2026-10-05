@@ -105,7 +105,10 @@ url: http://localhost:8080/api
         - sessionsの並び順はstarted_atの昇順
         - track_pointsの並び順はrecorded_atの昇順
         - ユーザー機能が実装されていない間はトークンの検証をスルーする形とする
-        - ページングは未定(このドキュメントが正式版になるまでには決定予定)
+        - ページングは行わない(開発用データの件数では不要で、カーソルの扱いが複雑になるため)。
+          必要になった場合は、このGETではsessionのid・updated_at(tombstoneはdeleted_at)の一覧のみを返し、本体は
+          `GET /users/{user_id}/sessions/{session_id}`で1件ずつ(または数件ずつまとめて)取得する形にする
+          (途中で失敗しても取得済みの分は残るので、残りだけをやり直せる)
 
 - POST /users/{user_id}/sessions
     パスパラメーター:
