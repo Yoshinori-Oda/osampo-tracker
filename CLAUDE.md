@@ -235,6 +235,8 @@ docker compose up -d --build
 # マイグレーション(DBのボリュームを作り直した後や、マイグレーションを追加した後に。開発用とテスト用の両方)
 docker compose run --rm api alembic upgrade head
 docker compose run --rm api alembic -x db=test upgrade head
+# PostgRESTは起動時にテーブル・関数の一覧をキャッシュするので、マイグレーションの後に再起動する(PostgRESTを削除するまで)
+docker compose restart postgrest
 # モデル(app/models/)とDBのスキーマに差分が無いことの確認
 docker compose run --rm api alembic check
 # 開発用のダミーデータを入れる(テーブルの所有者のロールで実行する)
