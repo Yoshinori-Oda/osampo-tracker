@@ -1,7 +1,7 @@
 import uuid
 from datetime import datetime
 
-from sqlalchemy import REAL, Boolean, DateTime, ForeignKey, Index, Integer, String, text
+from sqlalchemy import Boolean, DateTime, ForeignKey, Index, Integer, String, text
 from sqlalchemy.dialects.postgresql import DOUBLE_PRECISION, UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -46,9 +46,10 @@ class TrackingSession(Base):
     move_method: Mapped[str] = mapped_column(String(50))
     total_distance: Mapped[float] = mapped_column(DOUBLE_PRECISION, server_default=text("0.0"))
     duration_seconds: Mapped[int] = mapped_column(Integer, server_default=text("0"))
-    elevation_gain: Mapped[float] = mapped_column(REAL, server_default=text("0.0"))
-    max_altitude: Mapped[float | None] = mapped_column(REAL)
-    min_altitude: Mapped[float | None] = mapped_column(REAL)
+    # 端末(Dartのdouble)と同じ倍精度にする(0002でREALから変更。POSTの再送判定で値を比較するため)
+    elevation_gain: Mapped[float] = mapped_column(DOUBLE_PRECISION, server_default=text("0.0"))
+    max_altitude: Mapped[float | None] = mapped_column(DOUBLE_PRECISION)
+    min_altitude: Mapped[float | None] = mapped_column(DOUBLE_PRECISION)
 
     # 非同期では関連の遅延ロード(アクセスした時に暗黙にSELECTする)ができないので、lazy="raise"で
     # 読み込み忘れをエラーにする。読み込むときはselectinload(TrackingSession.track_points)を指定する
