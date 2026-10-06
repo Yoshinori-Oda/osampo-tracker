@@ -13,11 +13,7 @@ from app.models import TrackingSession
 
 
 async def purge_expired_tombstones(db: AsyncSession, retention_days: int) -> int:
-    """deleted_at(削除した日時)がパージ期間より古いtombstoneを物理削除し、削除した件数を返す。
-
-    PostgREST・cronが残っている間は、現行のfrontendがdeleted_atにパージ予定日時(未来の日時)を入れてくるが、
-    この条件には当たらないので、並行して動かしても消してしまうことはない。
-    """
+    """deleted_at(削除した日時)がパージ期間より古いtombstoneを物理削除し、削除した件数を返す。"""
     result = await db.execute(
         delete(TrackingSession).where(
             TrackingSession.deleted_at.is_not(None),

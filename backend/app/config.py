@@ -13,7 +13,7 @@ class Settings(BaseSettings):
 
     postgres_host: str = "db"
     postgres_port: int = 5432
-    # 開発用のデータベース(api・worker・PostgRESTが使う)
+    # 開発用のデータベース(api・workerが使う)
     postgres_db: str
     # pytest専用のデータベース
     postgres_test_db: str = "location_db_test"

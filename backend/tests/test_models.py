@@ -4,7 +4,6 @@
 各テストはトランザクションの中で実行し、最後にロールバックするのでデータは残らない。
 """
 
-import json
 import uuid
 from collections.abc import AsyncIterator
 from datetime import UTC, datetime
@@ -147,41 +146,14 @@ async def test_altitude_columns_keep_double_precision(app_connection: AsyncConne
     assert loaded.min_altitude == MIN_ALTITUDE
 
 
-async def test_register_session_with_points_keeps_double_precision(
-    app_connection: AsyncConnection,
-):
-    # PostgRESTが使うストアドファンクションも、高度関連の値を倍精度のまま保存すること
-    user_id = (
-        await app_connection.execute(
-            text("INSERT INTO users (email) VALUES (:email) RETURNING id"),
-            {"email": f"{uuid.uuid4()}@example.com"},
-        )
-    ).scalar_one()
-    session_id = uuid.uuid4()
-    payload = {
-        "id": str(session_id),
-        "user_id": str(user_id),
-        "name": "ストアドファンクションでの登録",
-        "started_at": "2026-10-01T08:00:00Z",
-        "ended_at": "2026-10-01T08:30:00Z",
-        "move_method": "walk",
-        "elevation_gain": ELEVATION_GAIN,
-        "max_altitude": MAX_ALTITUDE,
-        "min_altitude": MIN_ALTITUDE,
-    }
-    await app_connection.execute(
-        text("SELECT register_session_with_points(CAST(:session AS jsonb))"),
-        {"session": json.dumps(payload)},
-    )
-
-    row = (
+async def test_postgrest_functions_are_removed(app_connection: AsyncConnection):
+    # 0003でPostgREST用のストアドファンクションを削除している
+    remaining = (
         await app_connection.execute(
             text(
-                "SELECT elevation_gain, max_altitude, min_altitude FROM sessions WHERE id = :id"
-            ),
-            {"id": session_id},
+                "SELECT proname FROM pg_proc WHERE proname IN "
+                "('register_session_with_points', 'fetch_remote_sessions')"
+            )
         )
-    ).one()
-    assert row.elevation_gain == ELEVATION_GAIN
-    assert row.max_altitude == MAX_ALTITUDE
-    assert row.min_altitude == MIN_ALTITUDE
+    ).all()
+    assert remaining == []

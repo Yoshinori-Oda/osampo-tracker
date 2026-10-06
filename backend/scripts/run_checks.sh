@@ -10,7 +10,7 @@
 # step (記述順ではなく下記の順で実行する。省略時は migrate check lint test):
 #   lock     uv lock (pyproject.tomlの依存パッケージを変えた場合。uvのDockerイメージで実行する)
 #   up       docker compose up -d --build (依存パッケージ・Dockerfile・composeを変えた場合、初回起動時)
-#   migrate  開発用・テスト用の両方のデータベースに alembic upgrade head し、PostgRESTを再起動する
+#   migrate  開発用・テスト用の両方のデータベースに alembic upgrade head する
 #   check    alembic check (モデルとDBのスキーマに差分が無いことの確認)
 #   lint     ruff check
 #   test     pytest (-t/--test で対象ファイル・テストを絞れる。複数指定可。例: -t tests/test_models.py)
@@ -195,11 +195,7 @@ migrate_all() {
   echo
   echo "--- テスト用のデータベース ---"
   compose_run alembic -x db=test upgrade head || return $?
-  compose_run alembic -x db=test current || return $?
-  echo
-  # PostgRESTは起動時にテーブル・関数の一覧をキャッシュするので、マイグレーションの後に再起動する(PostgRESTを削除するまで)
-  echo "--- PostgRESTの再起動 ---"
-  docker compose restart postgrest
+  compose_run alembic -x db=test current
 }
 
 for step in $STEPS; do

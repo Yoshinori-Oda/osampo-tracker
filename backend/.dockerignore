@@ -5,6 +5,4 @@
 .ruff_cache/
 host_check_logs/
 docs/
-cron/
 db/
-test_data.sh

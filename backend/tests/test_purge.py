@@ -48,13 +48,11 @@ async def test_purges_only_tombstones_older_than_retention(db_session: AsyncSess
         db_session, user, "パージ期間内の削除", now - timedelta(days=RETENTION_DAYS - 1)
     )
     await add_session(db_session, user, "生きている", None)
-    # 現行のfrontendが入れてくるパージ予定日時(未来の日時)は、新しい条件では消さない
-    await add_session(db_session, user, "旧形式のtombstone", now + timedelta(days=30))
 
     purged = await purge_expired_tombstones(db_session, RETENTION_DAYS)
 
     assert purged == 1
-    assert await remaining_names(db_session) == {"パージ期間内の削除", "生きている", "旧形式のtombstone"}
+    assert await remaining_names(db_session) == {"パージ期間内の削除", "生きている"}
     # track_pointsもON DELETE CASCADEで一緒に消える
     remaining_points = await db_session.scalar(
         select(func.count()).where(TrackPoint.session_id == expired.id)

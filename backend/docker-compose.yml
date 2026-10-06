@@ -16,7 +16,6 @@ services:
       MIGRATOR_DB_PASSWORD: ${MIGRATOR_DB_PASSWORD}
       APP_DB_USER: ${APP_DB_USER}
       APP_DB_PASSWORD: ${APP_DB_PASSWORD}
-      AUTHENTICATOR_DB_PASSWORD: ${AUTHENTICATOR_DB_PASSWORD}
     ports:
       - "5432:5432"
     volumes:
@@ -80,27 +79,6 @@ services:
     image: axllent/mailpit
     ports:
       - "8025:8025"
-
-  # 同期APIをapiに移植するまで残す(フロントの接続先がまだPostgRESTのため)
-  postgrest:
-    image: postgrest/postgrest
-    ports:
-      - "3000:3000"
-    environment:
-      PGRST_DB_URI: "postgres://authenticator:${AUTHENTICATOR_DB_PASSWORD}@db:5432/${POSTGRES_DB}"
-      PGRST_DB_SCHEMA: "public"
-      PGRST_DB_ANON_ROLE: "web_anon"
-      PGRST_DB_CHANNEL_ENABLED: "true"
-    depends_on:
-      db:
-        condition: service_healthy
-
-  # パージ処理をworkerに移すまで残す
-  cron:
-    build: ./cron
-    container_name: location_cron
-    depends_on:
-      - postgrest
 
 volumes:
   postgis_data:

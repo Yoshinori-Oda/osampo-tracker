@@ -10,17 +10,11 @@ psql -v ON_ERROR_STOP=1 --username "$POSTGRES_USER" --dbname "$POSTGRES_DB" \
     -v migrator_password="$MIGRATOR_DB_PASSWORD" \
     -v app_user="$APP_DB_USER" \
     -v app_password="$APP_DB_PASSWORD" \
-    -v authenticator_password="$AUTHENTICATOR_DB_PASSWORD" \
     -v test_db="$POSTGRES_TEST_DB" <<'EOSQL'
 -- マイグレーション用: テーブルを作成・変更し、その所有者になる
 CREATE ROLE :"migrator_user" LOGIN PASSWORD :'migrator_password';
 -- api・worker用: データの読み書きのみ(テーブルの作成・変更はできない)
 CREATE ROLE :"app_user" LOGIN PASSWORD :'app_password';
--- PostgREST用(PostgRESTを削除するまでの暫定)
-CREATE ROLE web_anon NOLOGIN;
-CREATE ROLE authenticator LOGIN NOINHERIT PASSWORD :'authenticator_password';
-GRANT web_anon TO authenticator;
-
 -- pytest専用のデータベース
 CREATE DATABASE :"test_db";
 EOSQL
@@ -45,12 +39,12 @@ CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
 -- publicスキーマにテーブルを作れるのはマイグレーション用のロールだけにする
 REVOKE CREATE ON SCHEMA public FROM PUBLIC;
 GRANT USAGE, CREATE ON SCHEMA public TO :"migrator_user";
-GRANT USAGE ON SCHEMA public TO :"app_user", web_anon;
+GRANT USAGE ON SCHEMA public TO :"app_user";
 
 -- マイグレーション用のロールが今後作るテーブル・シーケンスに、自動で読み書きの権限を付ける
 ALTER DEFAULT PRIVILEGES FOR ROLE :"migrator_user" IN SCHEMA public
-    GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO :"app_user", web_anon;
+    GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO :"app_user";
 ALTER DEFAULT PRIVILEGES FOR ROLE :"migrator_user" IN SCHEMA public
-    GRANT USAGE, SELECT ON SEQUENCES TO :"app_user", web_anon;
+    GRANT USAGE, SELECT ON SEQUENCES TO :"app_user";
 EOSQL
 done
