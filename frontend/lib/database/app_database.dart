@@ -51,6 +51,9 @@ class TrackPoints extends Table {
 class AppDatabase extends _$AppDatabase {
   AppDatabase() : super(_openConnection());
 
+  // テスト用(メモリ上のDBなどを渡す)
+  AppDatabase.forTesting(super.executor);
+
   @override
   int get schemaVersion => 1;
 
@@ -145,6 +148,8 @@ class AppDatabase extends _$AppDatabase {
           elevationGain: Value(session.elevationGain),
           maxAltitude: Value(session.maxAltitude),
           minAltitude: Value(session.minAltitude),
+          // サーバーが返したupdated_at(サーバー時刻)をそのまま保存する
+          updatedAt: Value(session.updatedAt),
         )
       );
 
@@ -172,10 +177,12 @@ class AppDatabase extends _$AppDatabase {
     return (delete(sessions)..where((tbl) => tbl.id.equals(session.sessionId))).go();
   }
 
-  // 保存済みセッションの削除。リモートに一度も存在しない行はそのまま物理削除し、
-  // 既にリモートにある行はdeletedUnsyncedにして次回同期でtombstoneをpushする
+  // 保存済みセッションの削除。収録中の行はそのまま物理削除し、それ以外はdeletedUnsyncedにして
+  // 次回同期でDELETEを送る。ended(登録のPOSTの成功を確認できていない)の行もDELETEを送る:
+  // POSTがサーバーでは成功していてレスポンスだけが届かなかった場合に、ローカルだけで消すと
+  // サーバーに残ったsessionが次のpullで返ってきて復活してしまうため(未登録ならサーバーが404を返す)
   Future<void> deleteSession({required Session session}) async {
-    if (session.status == Status.inProgress || session.status == Status.ended) {
+    if (session.status == Status.inProgress) {
       await (delete(sessions)..where((tbl) => tbl.id.equals(session.id))).go();
       return;
     }
@@ -188,13 +195,36 @@ class AppDatabase extends _$AppDatabase {
     );
   }
 
-  Future<void> markAsSynced({required String sessionId, required DateTime syncTime}) {
+  // pushが成功した行を同期済みにする。updatedAtにはサーバーが返したupdated_at(サーバー時刻)を保存する
+  Future<void> markAsSynced({required String sessionId, required DateTime updatedAt}) {
     return (update(sessions)..where((tbl) => tbl.id.equals(sessionId))).write(
       SessionsCompanion(
         status: const Value(Status.synced),
-        updatedAt: Value(DateTime.now())
+        updatedAt: Value(updatedAt)
       )
     );
+  }
+
+  // 削除の突き合わせ(existence-check)で送る、同期済みのセッションのid
+  Future<List<String>> getSyncedSessionIds() async {
+    final query = selectOnly(sessions)
+      ..addColumns([sessions.id])
+      ..where(sessions.status.equals(Status.synced.index));
+    final rows = await query.get();
+    return rows.map((row) => row.read(sessions.id)!).toList();
+  }
+
+  // 登録時にidが別のセッションと衝突した(409 id_conflicted)場合に、セッションのidを振り直す。
+  // 新しいidの行を作ってtrack_pointsを付け替え、古い行を消す(主キーを直接書き換えずに済むようにする)
+  Future<void> reassignSessionId({required String oldId, required String newId}) {
+    return transaction(() async {
+      final old = await (select(sessions)..where((tbl) => tbl.id.equals(oldId))).getSingle();
+      await into(sessions).insert(old.copyWith(id: newId).toCompanion(true));
+      await (update(trackPoints)..where((tbl) => tbl.sessionId.equals(oldId))).write(
+        TrackPointsCompanion(sessionId: Value(newId))
+      );
+      await (delete(sessions)..where((tbl) => tbl.id.equals(oldId))).go();
+    });
   }
 
   // 削除が確定した(自分のpushが通った/他端末からのtombstoneをpullした)行を物理削除する

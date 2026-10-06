@@ -45,9 +45,10 @@ Claude Code がこのプロジェクトで作業する際のコンテキスト�
 
 - 言語: Dart
 - フレームワーク: Flutter, Drift, Geolocator, flutter_map, Riverpod
-- データベース: PostgreSQL (PostGIS) + PostgREST
-  - PostgRESTはPython(FastAPI)のAPIサーバーに置き換える予定(2026-09-29決定。DBは継続)。
-    構成は`docs/plans/user-feature-plan.md`の「バックエンド構成」を参照
+- バックエンド: PostgreSQL (PostGIS) + Python(FastAPI)のAPIサーバー
+  - 2026-09-29にPostgRESTからの置き換えを決定し、2026-10-06にfrontendの同期を新しいAPIへ切り替えた
+    (PostgREST・cronのコンテナは削除予定)。構成は`docs/plans/user-feature-plan.md`の「バックエンド構成」と
+    `backend/docs/バックエンド構成.md`を参照
 
 ## ディレクトリ構成
 
@@ -204,10 +205,11 @@ Claude Code がこのプロジェクトで作業する際のコンテキスト�
 
 守るべきルールの要点のみ。症状・原因・見分け方は`docs/pitfalls.md`を参照。
 
-- 同期の比較に使うタイムスタンプ(`last_synced_at`等)は必ず`.toUtc().toIso8601String()`で保存・送信する
+- `last_synced_at`はGETのレスポンスの`synced_at`をそのまま保存・送信する(端末で日時を組み立て直さない)
 - `TrackingRepository`のコンストラクタは開発中、毎回`last_synced_at`をクリアする
   (`_clearLastSyncedAtForTest`)。本番相当の挙動を確認する場合は外す
-- PostgRESTの更新PATCHで競合検出が必要なものには`&deleted_at=is.null`等のフィルタを必ず付ける
+- 同期APIの404は`code`が`session_not_found`のときだけ「サーバーにそのセッションが無い」として扱う
+  (`code`の無い404・`user_not_found`では同期を止め、ローカルのデータに触れない)
 - `TrackingRepository.updateSession()`はpush用の内部メソッド。ローカル編集用は`updateSessionInfo()`
   のように別名にする(同名だと`duplicate_definition`)
 - `Geolocator.getCurrentPosition`は必ず`LocationSettings(timeLimit: ...)`付きで呼ぶ(無期限だとハングする)
@@ -230,8 +232,9 @@ Claude Code がこのプロジェクトで作業する際のコンテキスト�
 backendの`docker compose`も含め、以下はすべてホスト側で実行する(コンテナにはFlutterが無い)。
 
 ```bash
-# 起動
+# 起動(同期先は既定でhttp://localhost:8080/api。実機・Androidエミュレータからはlocalhostに届かないので切り替える)
 flutter run
+flutter run --dart-define=API_BASE_URL=http://<ホストのIP>:8080/api
 
 # 以下はfrontendディレクトリで実行し、結果はhost_check_logs/<timestamp>_<run_id>_<結果>/に残る
 # 静的解析 + ユニット/ウィジェットテスト(既定)
