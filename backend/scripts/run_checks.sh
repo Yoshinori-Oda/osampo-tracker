@@ -267,7 +267,9 @@ SUMMARY="$RUN_DIR/SUMMARY.md"
     echo "## alembic check"
     echo
     echo '```text'
+    # "Detected sequence ... assuming SERIAL" は差分ではなく連番の扱いの情報なので除外する
     grep -E 'No new upgrade operations detected|New upgrade operations detected|Detected ' "$RUN_DIR/check.log" \
+      | grep -v 'assuming SERIAL' \
       || tail -n 5 "$RUN_DIR/check.log"
     echo '```'
   fi
