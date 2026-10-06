@@ -4,18 +4,18 @@ import os
 # app.configのSettingsはimport時に環境変数を読むので、appをimportする前に書き換える
 os.environ["POSTGRES_DB"] = os.environ.get("POSTGRES_TEST_DB", "location_db_test")
 
-import uuid  # noqa: E402
-from collections.abc import AsyncIterator  # noqa: E402
+import uuid
+from collections.abc import AsyncIterator
 
-import pytest  # noqa: E402
-from httpx import ASGITransport, AsyncClient  # noqa: E402
-from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine  # noqa: E402
-from sqlalchemy.pool import NullPool  # noqa: E402
+import pytest
+from httpx import ASGITransport, AsyncClient
+from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
+from sqlalchemy.pool import NullPool
 
-from app.config import settings  # noqa: E402
-from app.db import DB_CONNECT_ARGS, get_session  # noqa: E402
-from app.main import app  # noqa: E402
-from app.models import User  # noqa: E402
+from app.config import settings
+from app.db import DB_CONNECT_ARGS, get_session
+from app.main import app
+from app.models import User
 
 
 @pytest.fixture

@@ -76,7 +76,8 @@ async def fetch(client: AsyncClient, user: User, last_synced_at: str | None = No
 
 
 def parse_time(value: str) -> datetime:
-    return datetime.fromisoformat(value.replace("Z", "+00:00"))
+    # Python 3.11以降のfromisoformatは"Z"(UTC)をそのまま読める
+    return datetime.fromisoformat(value)
 
 
 # ---- GET(差分取得) ---------------------------------------------------------------

@@ -102,15 +102,18 @@ class BodySizeLimitMiddleware:
             return
 
         content_length = dict(scope["headers"]).get(b"content-length")
-        if content_length is not None and content_length.isdigit():
-            if int(content_length) > self.max_body_bytes:
-                response = error_response(
-                    413,
-                    ErrorCode.PAYLOAD_TOO_LARGE,
-                    _DEFAULT_MESSAGES[ErrorCode.PAYLOAD_TOO_LARGE],
-                )
-                await response(scope, receive, send)
-                return
+        if (
+            content_length is not None
+            and content_length.isdigit()
+            and int(content_length) > self.max_body_bytes
+        ):
+            response = error_response(
+                413,
+                ErrorCode.PAYLOAD_TOO_LARGE,
+                _DEFAULT_MESSAGES[ErrorCode.PAYLOAD_TOO_LARGE],
+            )
+            await response(scope, receive, send)
+            return
 
         received = 0
 

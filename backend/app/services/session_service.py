@@ -136,7 +136,9 @@ async def _load_track_points(
 ) -> dict[uuid.UUID, list[TrackPointOut]]:
     if not session_ids:
         return {}
-    geometry = cast(TrackPoint.location, Geometry)
+    # ST_X/ST_Y/ST_Zはgeometry型の関数なのでgeographyから変換する。型を指定しないと2次元(geometry(GEOMETRY,-1))への
+    # 変換になり、高度(Z)を持つ点がエラーになるので、高度付きの点(POINTZ)として変換する
+    geometry = cast(TrackPoint.location, Geometry(geometry_type="POINTZ", srid=4326))
     rows = await db.execute(
         select(
             TrackPoint.session_id,
