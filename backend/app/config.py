@@ -25,6 +25,9 @@ class Settings(BaseSettings):
     migrator_db_user: str | None = None
     migrator_db_password: SecretStr | None = None
 
+    # リクエストのbodyのサイズの上限(uvicorn・FastAPIには既定の上限が無いため)。超えると413を返す
+    max_request_body_bytes: int = 10 * 1024 * 1024
+
     # tombstoneのパージ(worker)。パージ期間はGETのrequest_existence_checkの判定でも参照する
     purge_retention_days: int = 90
     purge_interval_hours: int = 24

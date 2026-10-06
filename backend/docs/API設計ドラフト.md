@@ -25,20 +25,38 @@ url: http://localhost:8080/api
     ```
     {
         "code": "session_not_found",   (エラーの種類。クライアントはこれで処理を分岐する)
-        "message": "..."   (人が読むための説明。クライアントは分岐に使わない)
+        "message": "...",   (人が読むための説明。クライアントは分岐に使わない)
+        "details": [   (422のときだけ含める。それ以外のエラーではキー自体を含めない)
+            {
+                "field": "body.move_method",   (不正だった項目。受け取った場所(body/query/path/header)と項目名をドットでつなぐ)
+                "reason": "..."   (不正な理由。人が読むための説明)
+            }
+        ]
     }
     ```
 - 同じステータスコードでも意味が異なる場合があるため、クライアントが処理を分岐する必要があるエラーには必ず`code`を付ける。
+  `code`の無いエラーは返さない(クライアントが「`session_not_found`以外の404では同期を止める」のように判定しやすくするため)
+- 想定外のエラー(500)では、原因(スタックトレース等)はサーバーのログにのみ出し、レスポンスには含めない
+- 実装: `app/errors.py`(`ErrorCode`・`AppError`)、`app/error_handlers.py`(例外ハンドラー・bodyのサイズの上限)、
+  `app/dependencies.py`(Content-Typeの確認)
 
 ### codeの一覧
 | code | ステータス | 意味 |
 | --- | --- | --- |
+| `unauthenticated` | 401 | トークンが無い・署名が不正・トークンの持ち主が存在しない・無効化されている(クライアントは再ログインを促す) |
+| `token_expired` | 401 | アクセストークンの有効期限切れ(クライアントはリフレッシュトークンでトークンを更新し、元のリクエストをやり直す) |
+| `forbidden` | 403 | 認証はできたが、その操作の権限が無い(一般ユーザーが他ユーザーのuser_idを指定した等) |
 | `user_not_found` | 404 | パスパラメーターのuser_idのユーザーが存在しない |
 | `session_not_found` | 404 | 当該ユーザーのsessionとして存在しない(パージ済み・未登録・他ユーザーのもの) |
+| `not_found` | 404 | 存在しないパス |
+| `method_not_allowed` | 405 | そのパスでは使えないメソッド(Allowヘッダーで使えるメソッドを返す) |
 | `id_conflicted` | 409 | 登録しようとしたidが別のsessionと衝突している |
 | `deleted` | 409 | 対象のsessionが削除済み(tombstone)で、編集内容と競合している |
-
-(401・403・413・415・422等のcodeはエラーハンドリングの実装時に決める)
+| `payload_too_large` | 413 | bodyがサイズの上限(10MB)を超えている |
+| `unsupported_media_type` | 415 | Content-Typeが`application/json`でない(media typeはContent-Typeの値を指すHTTPの用語) |
+| `validation_error` | 422 | 入力チェックの失敗。`details`にどの項目がなぜ不正かを入れる |
+| `internal_error` | 500 | 想定外のエラー |
+| `http_error` | その他 | 上記に当てはまらないHTTPのエラー |
 
 ## endpoints
 - GET /users/{user_id}/sessions?last_synced_at=<日時>
