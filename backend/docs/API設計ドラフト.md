@@ -5,6 +5,8 @@
 
 ## server
 url: http://localhost:8080/api
+(以下のendpointsのパスはこのurlからの相対パス。例: `GET /users/{user_id}/sessions` は `http://localhost:8080/api/users/{user_id}/sessions`。
+実装: `backend/app/routers/sessions.py`)
 
 ## 共通事項
 
@@ -50,6 +52,7 @@ url: http://localhost:8080/api
 | `session_not_found` | 404 | 当該ユーザーのsessionとして存在しない(パージ済み・未登録・他ユーザーのもの) |
 | `not_found` | 404 | 存在しないパス |
 | `method_not_allowed` | 405 | そのパスでは使えないメソッド(Allowヘッダーで使えるメソッドを返す) |
+| `not_acceptable` | 406 | Acceptで`application/json`を受け付けていない(GET) |
 | `id_conflicted` | 409 | 登録しようとしたidが別のsessionと衝突している |
 | `deleted` | 409 | 対象のsessionが削除済み(tombstone)で、編集内容と競合している |
 | `payload_too_large` | 413 | bodyがサイズの上限(10MB)を超えている |

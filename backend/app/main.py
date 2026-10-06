@@ -2,7 +2,7 @@ from fastapi import FastAPI
 
 from app.config import settings
 from app.error_handlers import install_error_handling
-from app.routers import health
+from app.routers import health, sessions
 
 app = FastAPI(title="osampo-tracker API")
 
@@ -11,3 +11,4 @@ install_error_handling(app, max_body_bytes=settings.max_request_body_bytes)
 
 # /healthは運用(composeのhealthcheck)用なので、APIのパス(/api/...)の外に置く
 app.include_router(health.router)
+app.include_router(sessions.router)

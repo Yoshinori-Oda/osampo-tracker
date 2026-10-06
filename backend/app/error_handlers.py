@@ -22,6 +22,7 @@ _HTTP_STATUS_CODES: dict[int, ErrorCode] = {
     403: ErrorCode.FORBIDDEN,
     404: ErrorCode.NOT_FOUND,
     405: ErrorCode.METHOD_NOT_ALLOWED,
+    406: ErrorCode.NOT_ACCEPTABLE,
     413: ErrorCode.PAYLOAD_TOO_LARGE,
     415: ErrorCode.UNSUPPORTED_MEDIA_TYPE,
 }
@@ -31,6 +32,7 @@ _DEFAULT_MESSAGES: dict[ErrorCode, str] = {
     ErrorCode.FORBIDDEN: "この操作の権限がありません",
     ErrorCode.NOT_FOUND: "指定されたパスは存在しません",
     ErrorCode.METHOD_NOT_ALLOWED: "このパスでは指定されたメソッドを使えません",
+    ErrorCode.NOT_ACCEPTABLE: "レスポンスはapplication/jsonでのみ返せます",
     ErrorCode.PAYLOAD_TOO_LARGE: "リクエストのbodyが大きすぎます",
     ErrorCode.UNSUPPORTED_MEDIA_TYPE: "Content-Typeはapplication/jsonにしてください",
 }

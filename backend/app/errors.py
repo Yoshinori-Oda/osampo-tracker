@@ -25,6 +25,7 @@ class ErrorCode(StrEnum):
     # リクエストの形式(FastAPI・Starletteが既定で返すエラーもこれらに変換する)
     NOT_FOUND = "not_found"  # 404: 存在しないパス
     METHOD_NOT_ALLOWED = "method_not_allowed"  # 405
+    NOT_ACCEPTABLE = "not_acceptable"  # 406: Acceptでapplication/jsonを受け付けていない
     PAYLOAD_TOO_LARGE = "payload_too_large"  # 413: bodyがサイズの上限を超えている
     UNSUPPORTED_MEDIA_TYPE = "unsupported_media_type"  # 415: Content-Typeがapplication/jsonでない
     VALIDATION_ERROR = "validation_error"  # 422: 入力チェックの失敗。detailsにどの項目がなぜ不正かを入れる
