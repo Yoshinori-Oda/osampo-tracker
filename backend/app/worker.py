@@ -6,7 +6,7 @@ apiと同じイメージで、起動コマンドだけを`python -m app.worker`�
 
 import asyncio
 import logging
-from datetime import datetime
+from datetime import UTC, datetime
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 
@@ -36,7 +36,7 @@ async def main() -> None:
         "interval",
         hours=settings.purge_interval_hours,
         # 起動直後に1回実行し、以降はpurge_interval_hoursごとに実行する
-        next_run_time=datetime.now(),
+        next_run_time=datetime.now(UTC),
         # 前回の実行が終わっていなければ重ねて実行しない。止まっていた間の実行分はまとめて1回にする
         max_instances=1,
         coalesce=True,
