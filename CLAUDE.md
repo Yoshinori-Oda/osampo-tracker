@@ -60,7 +60,8 @@ Claude Code がこのプロジェクトで作業する際のコンテキスト�
     (register_session_with_points / fetch_remote_sessions)をそのまま写したもの
   - db/init/: DBコンテナの初回起動時に実行するスクリプト(ロール・テスト用データベース・拡張機能・権限)
   - db/seed.sql: 開発用のダミーデータ(テストユーザー`1111...`とセッション)
-  - cron/: 削除tombstoneの長周期パージ用cronコンテナ(workerへ移行予定)
+  - cron/: 削除tombstoneの長周期パージ用cronコンテナ(現行のfrontend用。workerのパージと並行して動いており、
+    frontendを新しいAPIに切り替えたら削除する)
   - docker-compose.yml: db / api / worker / mailpit / postgrest / cron。DBの接続情報は`backend/.env`(コミットしない)
   - docs/: FastAPIへの置き換えに向けたAPI設計・バックエンド構成の詳細設計(下記「ドキュメント索引」)
 - docs: 設計・経緯・計画(下記「ドキュメント索引」)
