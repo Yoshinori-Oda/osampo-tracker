@@ -131,13 +131,14 @@ Claude Code がこのプロジェクトで作業する際のコンテキスト�
   - Claude: 実装と一緒に、その変更を検証するテスト(`test/`配下のユニット/ウィジェットテスト、
     画面確認が必要なら`integration_test/`のシナリオ)を書き、ホストで実行してもらうコマンドを
     コピペで実行できる完全な形で提示する
-  - ユーザー: ホスト側で`scripts/run_checks.sh`を実行する(実行と完了報告のみ担当。
-    結果はファイルに残るので、出力を貼り付けて渡す必要はない)
-  - Claude: `frontend/host_check_logs/`の該当run_idの`SUMMARY.md`・各ログ・スクリーンショットを
-    Readツールで読んで修正する。**実行結果を確認するまで「動作確認済み」とは言わない**
+  - ユーザー: ホスト側で`frontend/scripts/run_checks.sh`(backendは`backend/scripts/run_checks.sh`)を実行する
+    (実行と完了報告のみ担当。結果はファイルに残るので、出力を貼り付けて渡す必要はない)
+  - Claude: `frontend/host_check_logs/`(backendは`backend/host_check_logs/`)の該当run_idの`SUMMARY.md`・
+    各ログ・スクリーンショットをReadツールで読んで修正する。**実行結果を確認するまで「動作確認済み」とは言わない**
 - Driftの`*.g.dart`などコード生成物もホスト側の`build_runner`でしか更新できない。
   テーブル定義を変えた場合は`run_checks.sh <run_id> codegen ...`の実行をユーザーに依頼すること
-- backendのSQL変更はコンテナ内では目視レビューに留まる。実DBでの検証はホスト側に依頼する
+- backendもDockerを使うのでコンテナ内では実行できない。SQL・マイグレーション・Pythonの変更はコンテナ内では目視レビューに
+  留まり、実DBでの検証・テストはホスト側で`backend/scripts/run_checks.sh`を実行してもらう
 
 ## 開発ルール
 
@@ -170,6 +171,17 @@ Claude Code がこのプロジェクトで作業する際のコンテキスト�
   `DEFAULT_DEVICE_ID`。シナリオの書き方は`docs/testing/e2e.md`
 - `integration_test`は実機/シミュレータの本物の`app.sqlite`に対して動く。**seedして保存した
   セッションは必ず`addTearDown`等で後始末すること**(実機の履歴・リモートDBが汚染される)
+- **backendのホスト側での実行は`backend/scripts/run_checks.sh <run_id> [step...]`で行う**(どこから実行してもよい)。
+  frontend版と同じ形で、run_idの扱い・step順の固定・途中で失敗しても残りを実行するのも同じ。stepは
+  `lock`(uv lock)/`up`(docker compose up -d --build)/`migrate`(開発用・テスト用DBへのalembic upgrade headと
+  PostgRESTの再起動)/`check`(alembic check)/`lint`(ruff check)/`test`(pytest。`-t`で絞れる)/`all`
+  (=up migrate check lint test)で、省略時は`migrate check lint test`。
+  - 依存パッケージを変えたら`lock up`、Dockerfile・compose・`pyproject.toml`・`alembic.ini`を変えたら`up`も付けて依頼する
+    (`app/`・`tests/`・`migrations/`以外はbind mountしていないので、イメージの作り直しが必要)
+  - 結果は`backend/host_check_logs/<timestamp>_<run_id>_<PASSED|FAILED>/`に保存される(`.gitignore`済み)。
+    `SUMMARY.md`(実行環境、stepごとの結果、適用したマイグレーションとrevision、alembic checkの結果、ruffの指摘、
+    pytestの失敗一覧と詳細、失敗したstepのログ末尾)をまず読む
+  - 前提: `backend/.env`があり、`up`以外のstepはサービスが起動済みであること
 
 ### git
 - **コード変更はgit worktree(`.claude/worktrees/<作業名>/`)で隔離して作業する**(手順は
@@ -230,19 +242,19 @@ scripts/run_checks.sh <run_id> all
 # E2Eのみ(デバイスを既定と変える場合のみ -d)
 scripts/run_e2e_tests.sh <run_id> -d <device_id>
 
-# backend起動(backendディレクトリで実行。事前にbackend/.envが必要: backend/docs/バックエンド構成.md)
-docker compose up -d --build
-# マイグレーション(DBのボリュームを作り直した後や、マイグレーションを追加した後に。開発用とテスト用の両方)
-docker compose run --rm api alembic upgrade head
-docker compose run --rm api alembic -x db=test upgrade head
-# PostgRESTは起動時にテーブル・関数の一覧をキャッシュするので、マイグレーションの後に再起動する(PostgRESTを削除するまで)
-docker compose restart postgrest
-# モデル(app/models/)とDBのスキーマに差分が無いことの確認
-docker compose run --rm api alembic check
-# 開発用のダミーデータを入れる(テーブルの所有者のロールで実行する)
+# 以下はbackendディレクトリで実行し、結果はbackend/host_check_logs/<timestamp>_<run_id>_<結果>/に残る
+# (事前にbackend/.envが必要: backend/docs/バックエンド構成.md)
+# マイグレーション + スキーマの差分確認 + lint + テスト(既定。サービスは起動済みの前提)
+scripts/run_checks.sh <run_id>
+# 起動(イメージの作り直し)から全部
+scripts/run_checks.sh <run_id> all
+# 依存パッケージを変えた場合
+scripts/run_checks.sh <run_id> lock up migrate check lint test
+# テスト対象を絞る
+scripts/run_checks.sh <run_id> test -t tests/test_models.py
+
+# DBのボリュームを作り直した後は、マイグレーションの後に開発用のダミーデータを入れる(テーブルの所有者のロールで実行する)
+docker compose down -v
+scripts/run_checks.sh <run_id> up migrate
 docker compose exec -T db psql -U osampo_migrator -d location_db < db/seed.sql
-# backendのテスト(dbが起動していて、テスト用のデータベースにマイグレーション済みの状態で)
-docker compose run --rm api pytest
-# 依存パッケージを変えたらuv.lockを更新する(コンテナ内ではできないのでホストで)
-docker run --rm -v "$PWD":/app -w /app ghcr.io/astral-sh/uv:python3.12-bookworm-slim uv lock
 ```
