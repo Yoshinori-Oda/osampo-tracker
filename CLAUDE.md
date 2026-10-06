@@ -46,24 +46,23 @@ Claude Code がこのプロジェクトで作業する際のコンテキスト�
 - 言語: Dart
 - フレームワーク: Flutter, Drift, Geolocator, flutter_map, Riverpod
 - バックエンド: PostgreSQL (PostGIS) + Python(FastAPI)のAPIサーバー
-  - 2026-09-29にPostgRESTからの置き換えを決定し、2026-10-06にfrontendの同期を新しいAPIへ切り替えた
-    (PostgREST・cronのコンテナは削除予定)。構成は`docs/plans/user-feature-plan.md`の「バックエンド構成」と
+  - 2026-09-29にPostgRESTからの置き換えを決定し、2026-10-06にfrontendの同期を新しいAPIへ切り替えて
+    PostgREST・cronを削除した。構成は`docs/plans/user-feature-plan.md`の「バックエンド構成」と
     `backend/docs/バックエンド構成.md`を参照
 
 ## ディレクトリ構成
 
-- backend: Dockerで動かすバックエンド。PostgREST + cronからFastAPI(api + worker)へ置き換え中で、移行が終わるまで両方が動く
+- backend: Dockerで動かすバックエンド(FastAPIのapi + 定期実行のworker + PostgreSQL)
   - app/: FastAPIのアプリ本体(config.py: 設定、db.py: DB接続、main.py: アプリ、worker.py: 定期実行、
     routers/・schemas/・services/・models/: レイヤ。詳細は`backend/docs/バックエンド構成.md`)
   - tests/: pytest
   - pyproject.toml・uv.lock: 依存パッケージ(uv)。Dockerfile: api・worker共通のイメージ
-  - alembic.ini・migrations/: Alembicのマイグレーション。0001は旧initdb.sqlのスキーマ・ストアドファンクション
-    (register_session_with_points / fetch_remote_sessions)をそのまま写したもの
+  - alembic.ini・migrations/: Alembicのマイグレーション。0001は旧initdb.sqlのスキーマ(とPostgREST用のストアドファンクション)を
+    そのまま写したもの、0002は高度関連の3列のdouble precision化、0003はPostgRESTの削除(ストアドファンクションの削除と
+    deleted_atの「削除した日時」への統一)
   - db/init/: DBコンテナの初回起動時に実行するスクリプト(ロール・テスト用データベース・拡張機能・権限)
   - db/seed.sql: 開発用のダミーデータ(テストユーザー`1111...`とセッション)
-  - cron/: 削除tombstoneの長周期パージ用cronコンテナ(現行のfrontend用。workerのパージと並行して動いており、
-    frontendを新しいAPIに切り替えたら削除する)
-  - docker-compose.yml: db / api / worker / mailpit / postgrest / cron。DBの接続情報は`backend/.env`(コミットしない)
+  - docker-compose.yml: db / api / worker / mailpit。DBの接続情報は`backend/.env`(コミットしない)
   - docs/: FastAPIへの置き換えに向けたAPI設計・バックエンド構成の詳細設計(下記「ドキュメント索引」)
 - docs: 設計・経緯・計画(下記「ドキュメント索引」)
 - frontend: Flutterによるモバイルアプリ本体(`flutter create`の出力から開発)
@@ -177,8 +176,7 @@ Claude Code がこのプロジェクトで作業する際のコンテキスト�
   セッションは必ず`addTearDown`等で後始末すること**(実機の履歴・リモートDBが汚染される)
 - **backendのホスト側での実行は`backend/scripts/run_checks.sh <run_id> [step...]`で行う**(どこから実行してもよい)。
   frontend版と同じ形で、run_idの扱い・step順の固定・途中で失敗しても残りを実行するのも同じ。stepは
-  `lock`(uv lock)/`up`(docker compose up -d --build)/`migrate`(開発用・テスト用DBへのalembic upgrade headと
-  PostgRESTの再起動)/`check`(alembic check)/`lint`(ruff check)/`test`(pytest。`-t`で絞れる)/`all`
+  `lock`(uv lock)/`up`(docker compose up -d --build)/`migrate`(開発用・テスト用DBへのalembic upgrade head)/`check`(alembic check)/`lint`(ruff check)/`test`(pytest。`-t`で絞れる)/`all`
   (=up migrate check lint test)で、省略時は`migrate check lint test`。
   - 依存パッケージを変えたら`lock up`、Dockerfile・compose・`pyproject.toml`・`alembic.ini`を変えたら`up`も付けて依頼する
     (`app/`・`tests/`・`migrations/`以外はbind mountしていないので、イメージの作り直しが必要)
