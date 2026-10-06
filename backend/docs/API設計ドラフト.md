@@ -8,7 +8,21 @@ url: http://localhost:8080/api
 (以下のendpointsのパスはこのurlからの相対パス。例: `GET /users/{user_id}/sessions` は `http://localhost:8080/api/users/{user_id}/sessions`。
 実装: `backend/app/routers/sessions.py`)
 
+OpenAPI(実装から自動生成): http://localhost:8080/docs (JSONは http://localhost:8080/openapi.json )
+- 役割分担: このドキュメント=判断の理由と処理の手順、OpenAPI=入出力の型・各項目の説明・例・ステータスごとのcode
+- OpenAPIの内容(operationId・エラーのcodeの記載・例)は`backend/tests/test_openapi.py`で確認している
+
 ## 共通事項
+
+### 判定の順番
+各エンドポイントの「処理」の手順は、次の順に判定する(実装の都合で、DBに問い合わせない確認を先に行う):
+1. リクエストの形式: bodyのサイズ(413)、Content-Type(415)、Accept(406)
+2. 認証と権限: 401、403(ブロック2で実装)
+3. ユーザーの存在: 404(`user_not_found`)
+4. 入力チェック: 422
+5. 業務ルール(sessionの存在・削除済みかどうか等): 404(`session_not_found`)・409
+
+ただし、パスパラメーターの書式の不正(UUIDでない等)は、ユーザーの存在の確認より先に422になる
 
 ### 認証と権限
 - 401(認証できない): トークンがない、署名が不正、有効期限切れ、またはトークンの持ち主のユーザーが存在しない・無効化されている場合
@@ -109,11 +123,11 @@ url: http://localhost:8080/api
             }
 
     処理:
-        1. トークンがない、あるいは無効だった場合: 401を返す
-        2. user_id、またはlast_synced_atの書式が不正な場合、またはlast_synced_atがサーバー時刻より大きい場合: 422を返す
-        3. header の認証情報に紐づいたユーザーが管理者でなく、かつuser_id と異なる場合: 403 を返す
-        4. user_idが存在しない場合: 404("code": "user_not_found")を返す
-        5. Acceptにapplication/jsonがない場合: 406を返す
+        1. Acceptにapplication/jsonがない場合: 406を返す
+        2. トークンがない、あるいは無効だった場合: 401を返す
+        3. user_id、またはlast_synced_atの書式が不正な場合、またはlast_synced_atがサーバー時刻より大きい場合: 422を返す
+        4. header の認証情報に紐づいたユーザーが管理者でなく、かつuser_id と異なる場合: 403 を返す
+        5. user_idが存在しない場合: 404("code": "user_not_found")を返す
         6. synced_atに現在のサーバー時刻(UTC)を入力する
         7. last_synced_atがabsent:　該当ユーザーのsessionのうちdeleted_atがnullのものを全て拾ってくる
            not absent: 該当ユーザーのsessionのうちupdated_atがlast_synced_atよりも後のものを全て拾ってくる
@@ -171,10 +185,10 @@ url: http://localhost:8080/api
     
     処理:
         1. リクエストのbodyサイズが10MBを超える場合: 413を返す
-        2. トークンがない、あるいは無効だった場合: 401を返す
-        3. header の認証情報に紐づいたユーザーが管理者でなく、かつパスパラメーターのuser_id と異なる場合: 403 を返す
-        4. パスパラメーターのuser_idが存在しない場合: 404("code": "user_not_found")を返す
-        5. Content-Typeがapplication/jsonでない場合: 415を返す
+        2. Content-Typeがapplication/jsonでない場合: 415を返す
+        3. トークンがない、あるいは無効だった場合: 401を返す
+        4. header の認証情報に紐づいたユーザーが管理者でなく、かつパスパラメーターのuser_id と異なる場合: 403 を返す
+        5. パスパラメーターのuser_idが存在しない場合: 404("code": "user_not_found")を返す
         6. updated_atに現在のサーバー時刻(UTC)を入力する
         7. validationを行って不正があった場合: 422を返す
         8. sessionsテーブル(全ユーザー)でidが等しいレコードがあった場合:
@@ -229,10 +243,10 @@ url: http://localhost:8080/api
 
     処理:
         1. リクエストのbodyサイズが10MBを超える場合: 413を返す
-        2. トークンがない、あるいは無効だった場合: 401を返す
-        3. header の認証情報に紐づいたユーザーが管理者でなく、かつパスパラメーターのuser_id と異なる場合: 403 を返す
-        4. パスパラメーターのuser_idが存在しない場合: 404("code": "user_not_found")を返す
-        5. Content-Typeがapplication/jsonでない場合: 415を返す
+        2. Content-Typeがapplication/jsonでない場合: 415を返す
+        3. トークンがない、あるいは無効だった場合: 401を返す
+        4. header の認証情報に紐づいたユーザーが管理者でなく、かつパスパラメーターのuser_id と異なる場合: 403 を返す
+        5. パスパラメーターのuser_idが存在しない場合: 404("code": "user_not_found")を返す
         6. updated_atに現在のサーバー時刻(UTC)を入力する
         7. validationを行って不正があった場合: 422を返す
         8. sessionsテーブルをidとパスパラメーターのuser_idの両方で絞って検索し、該当するレコードがない場合: 404("code": "session_not_found")を返す
@@ -305,10 +319,10 @@ url: http://localhost:8080/api
 
     処理:
         1. リクエストのbodyサイズが10MBを超える場合: 413を返す
-        2. トークンがない、あるいは無効だった場合: 401を返す
-        3. header の認証情報に紐づいたユーザーが管理者でなく、かつパスパラメーターのuser_id と異なる場合: 403 を返す
-        4. パスパラメーターのuser_idが存在しない場合: 404("code": "user_not_found")を返す
-        5. Content-Typeがapplication/jsonでない場合: 415を返す
+        2. Content-Typeがapplication/jsonでない場合: 415を返す
+        3. トークンがない、あるいは無効だった場合: 401を返す
+        4. header の認証情報に紐づいたユーザーが管理者でなく、かつパスパラメーターのuser_id と異なる場合: 403 を返す
+        5. パスパラメーターのuser_idが存在しない場合: 404("code": "user_not_found")を返す
         6. updated_atに現在のサーバー時刻(UTC)を入力する
         7. validationを行って不正があった場合: 422を返す(項目はPATCHと同じ)
         8. sessionsテーブルをidとパスパラメーターのuser_idの両方で絞って検索し、該当するレコードがない場合: 404("code": "session_not_found")を返す
@@ -354,10 +368,10 @@ url: http://localhost:8080/api
 
     処理:
         1. リクエストのbodyサイズが10MBを超える場合: 413を返す
-        2. トークンがない、あるいは無効だった場合: 401を返す
-        3. header の認証情報に紐づいたユーザーが管理者でなく、かつパスパラメーターのuser_id と異なる場合: 403 を返す
-        4. パスパラメーターのuser_idが存在しない場合: 404("code": "user_not_found")を返す
-        5. Content-Typeがapplication/jsonでない場合: 415を返す
+        2. Content-Typeがapplication/jsonでない場合: 415を返す
+        3. トークンがない、あるいは無効だった場合: 401を返す
+        4. header の認証情報に紐づいたユーザーが管理者でなく、かつパスパラメーターのuser_id と異なる場合: 403 を返す
+        5. パスパラメーターのuser_idが存在しない場合: 404("code": "user_not_found")を返す
         6. validationを行って不正があった場合: 422を返す
         7. session_idsのうち、当該ユーザーの生きている(deleted_atがnullの)sessionとして存在するものを検索する
         8. session_idsから7の結果を除いたものをmissing_session_idsとして200で返す
