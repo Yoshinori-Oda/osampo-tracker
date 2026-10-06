@@ -279,8 +279,11 @@ SUMMARY="$RUN_DIR/SUMMARY.md"
     echo "## ruff の指摘"
     echo
     echo '```text'
-    # "path:line:col: CODE message" 形式の行と、最後の件数の行
-    grep -E '^[^ ]+\.py:[0-9]+:[0-9]+: |^Found [0-9]+ error|All checks passed' "$RUN_DIR/lint.log" \
+    # 指摘の行と、最後の件数の行。ruffの出力形式は2通りあるので両方拾う:
+    #   旧形式 "path:line:col: CODE message"
+    #   新形式 "CODE message" の次の行に " --> path:line:col"
+    grep -E '^[^ ]+\.py:[0-9]+:[0-9]+: |^[A-Z]+[0-9]+ |^ *--> |^Found [0-9]+ error|All checks passed' \
+      "$RUN_DIR/lint.log" \
       || tail -n 10 "$RUN_DIR/lint.log"
     echo '```'
   fi
