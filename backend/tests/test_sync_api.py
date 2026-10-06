@@ -47,8 +47,7 @@ def new_session_payload(**overrides: Any) -> dict[str, Any]:
                 "recorded_at": "2026-10-01T08:00:05Z",
                 "latitude": 35.6813,
                 "longitude": 139.7672,
-                # 高度がnullの点も保存・取得できること
-                "altitude": None,
+                "altitude": 11.25,
             },
         ],
     }
@@ -113,7 +112,7 @@ async def test_initial_fetch_returns_alive_sessions_with_track_points(
             "recorded_at": "2026-10-01T08:00:05Z",
             "latitude": 35.6813,
             "longitude": 139.7672,
-            "altitude": None,
+            "altitude": 11.25,
         },
     ]
 
@@ -295,6 +294,17 @@ async def test_register_validation_errors(api_client: AsyncClient, user: User):
                     "recorded_at": STARTED_AT,
                     "latitude": 91,
                     "longitude": 0,
+                    "altitude": 10.0,
+                }
+            ]
+        ),
+        # 高度はnullを許さない(frontendが信頼度の低い高度を前回の値で補ってから送る前提)
+        "body.track_points.0.altitude": new_session_payload(
+            track_points=[
+                {
+                    "recorded_at": STARTED_AT,
+                    "latitude": 35.0,
+                    "longitude": 139.0,
                     "altitude": None,
                 }
             ]

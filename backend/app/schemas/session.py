@@ -33,8 +33,9 @@ class TrackPointIn(BaseModel):
     recorded_at: AwareDatetime
     latitude: float = Field(ge=-90, le=90)
     longitude: float = Field(ge=-180, le=180)
-    # 単位はm。キーは必須だがnullを許す
-    altitude: float | None
+    # 単位はm。nullは許さない(locationは高度込みの点(POINTZ)のため)。高度の信頼度が低い場合は、
+    # frontendが前回の点の高度で補ってから送る
+    altitude: float
 
 
 class SessionCreate(BaseModel):
@@ -82,7 +83,7 @@ class TrackPointOut(BaseModel):
     recorded_at: datetime
     latitude: float
     longitude: float
-    altitude: float | None
+    altitude: float
 
 
 class SessionOut(BaseModel):

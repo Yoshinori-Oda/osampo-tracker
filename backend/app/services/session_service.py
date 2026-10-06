@@ -4,7 +4,6 @@
 処理を続けられない場合はAppErrorを投げる(routersで共通の形式のエラーレスポンスになる)。
 """
 
-import math
 import uuid
 from datetime import datetime, timedelta
 
@@ -156,26 +155,10 @@ async def _load_track_points(
                 recorded_at=recorded_at,
                 latitude=latitude,
                 longitude=longitude,
-                altitude=_altitude_from_db(altitude),
+                altitude=altitude,
             )
         )
     return points
-
-
-# ---- 高度の扱い -------------------------------------------------------------------
-# locationは高度込みの点(POINTZ)でNOT NULLなので、高度がnullの点はそのままでは保存できない。
-# 暫定として、高度がnullのときはZにNaNを入れて保存し、読み出すときにNaNをnullに戻す。
-# (本来は高度を別の列に分けるスキーマ変更が望ましい。backend/docs/バックエンド構成.mdを参照)
-
-
-def _altitude_to_db(altitude: float | None) -> float:
-    return math.nan if altitude is None else altitude
-
-
-def _altitude_from_db(altitude: float | None) -> float | None:
-    if altitude is None or math.isnan(altitude):
-        return None
-    return altitude
 
 
 # ---- POST(登録) ---------------------------------------------------------------
@@ -274,11 +257,7 @@ async def _insert_track_points(
                         "recorded_at": point.recorded_at,
                         # geometryの点を作り、列の型(geography)へは暗黙の型変換に任せる
                         "location": func.ST_SetSRID(
-                            func.ST_MakePoint(
-                                point.longitude,
-                                point.latitude,
-                                _altitude_to_db(point.altitude),
-                            ),
+                            func.ST_MakePoint(point.longitude, point.latitude, point.altitude),
                             4326,
                         ),
                     }

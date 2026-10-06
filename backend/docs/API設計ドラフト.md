@@ -96,7 +96,7 @@ url: http://localhost:8080/api
                             {"recorded_at": "2026-10-01T17:00:00.000Z",    (Time Stamp (UTC))
                             "latitude": 37.33003773,
                             "longitude": -122.02088037,
-                            "altitude": 12.5},  (nullable, [m])
+                            "altitude": 12.5},  ([m]、nullは不可)
                             ...
                         ]
                     },
@@ -155,7 +155,7 @@ url: http://localhost:8080/api
                     "recorded_at": "2026-10-01T17:00:00.000Z",   (Time Stamp (UTC))
                     "latitude": 37.33003773,   (double precision, -90~90)
                     "longitude": -122.02088037,   (double precision, -180~180)
-                    "altitude": 12.5   (nullable, [m])
+                    "altitude": 12.5   ([m]、nullは不可。高度の信頼度が低い場合は端末が前回の点の高度で補う)
                 },
                 ...
             ]
@@ -201,7 +201,7 @@ url: http://localhost:8080/api
             - move_methodがwalk, run, bicycle, car, train, plane, shipのいずれかである
             - total_distance, duration_seconds, elevation_gainが0以上
             - latitudeが-90~90, longitudeが-180~180
-            - nullはmax_altitude, min_altitude, altitudeのみ許す
+            - nullはmax_altitude, min_altitudeのみ許す(track_pointsのaltitudeはnull不可。locationが高度込みの点(POINTZ)のため)
         - 万が一同時に同じIDのセッションが登録されようとした時のために、登録処理はINSERT ... ON CONFLICT DO NOTHINGで行い、DO NOTHINGで挿入が0件の場合は手順8からやり直す
         - セッションとトラックポイントは1つのトランザクションで登録する
 
