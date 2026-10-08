@@ -6,7 +6,7 @@
 ## server
 url: http://localhost:8080/api
 (以下のendpointsのパスはこのurlからの相対パス。例: `GET /users/{user_id}/sessions` は `http://localhost:8080/api/users/{user_id}/sessions`。
-実装: `backend/app/routers/sessions.py`)
+実装: 同期は`backend/app/routers/sessions.py`、認証・ユーザーは`backend/app/routers/auth.py`・`backend/app/routers/users.py`(ブロック2で実装))
 
 OpenAPI(実装から自動生成): http://localhost:8080/docs (JSONは http://localhost:8080/openapi.json )
 - 役割分担: このドキュメント=判断の理由と処理の手順、OpenAPI=入出力の型・各項目の説明・例・ステータスごとのcode
@@ -17,7 +17,7 @@ OpenAPI(実装から自動生成): http://localhost:8080/docs (JSONは http://lo
 ### 判定の順番
 各エンドポイントの「処理」の手順は、次の順に判定する(実装の都合で、DBに問い合わせない確認を先に行う):
 1. リクエストの形式: bodyのサイズ(413)、Content-Type(415)、Accept(406)
-2. 認証と権限: 401、403(ブロック2で実装)
+2. 認証と権限: 401(`unauthenticated`・`token_expired`)、403(`forbidden`)、同期APIでは403(`email_not_verified`)
 3. ユーザーの存在: 404(`user_not_found`)
 4. 入力チェック: 422
 5. 業務ルール(sessionの存在・削除済みかどうか等): 404(`session_not_found`)・409
@@ -25,10 +25,19 @@ OpenAPI(実装から自動生成): http://localhost:8080/docs (JSONは http://lo
 ただし、パスパラメーターの書式の不正(UUIDでない等)は、ユーザーの存在の確認より先に422になる
 
 ### 認証と権限
-- 401(認証できない): トークンがない、署名が不正、有効期限切れ、またはトークンの持ち主のユーザーが存在しない・無効化されている場合
-  クライアントは再ログインを促す
+認証の仕組みの詳細は下記「認証のendpoints」と`backend/docs/バックエンド構成.md`の「認証」。
+- ログイン・サインアップ・トークンの更新以外のendpointは、`Authorization: Bearer <アクセストークン>`ヘッダーが必須
+- アクセストークンはES256で署名したJWT(有効期限15分)。中身は`sub`(ユーザーID)・`sid`(端末ごとのログイン状態のID)・`type`("access")・
+  `iat`・`exp`。ロールはトークンに入れず、リクエストのたびにDBから読む
+- リクエストのたびに、トークンの署名・有効期限に加えて、DBで「ユーザーが存在し無効化(`disabled_at`)されていない」
+  「`sid`の端末のログイン状態が無効化されていない」ことを確認する(ログアウト・削除・停止がすぐ反映されるようにするため)
+- 401(認証できない): トークンがない、署名が不正、トークンの持ち主のユーザーが存在しない・無効化されている、
+  端末のログイン状態が無効化されている場合は`unauthenticated`(クライアントは再ログインを促す)。有効期限切れは`token_expired`
+  (クライアントはリフレッシュトークンでトークンを更新し、元のリクエストをやり直す)
 - 403(権限がない): 認証はできたが、トークンのユーザーが管理者でなく、かつパスパラメーターのuser_idが自分自身でない場合
   再ログインしても結果は変わらない
+- 403(`email_not_verified`): 同期API(`/users/{user_id}/sessions/...`)は、トークンのユーザーのメールアドレスの確認が
+  済んでいなければ403にする(ログインはできるが同期はできない。確認コードはブロック3で実装)
 - 上記の順に判定するので、一般ユーザーに404("user_not_found")が返ることはない(他ユーザーのuser_idを指定すると403で止まり、
   自分自身のユーザーが存在しなければ401で止まる)。404("user_not_found")が返るのは管理者が存在しないuser_idを指定した場合のみで、
   一般ユーザーには他ユーザーの存在有無が分からない
@@ -61,13 +70,18 @@ OpenAPI(実装から自動生成): http://localhost:8080/docs (JSONは http://lo
 | --- | --- | --- |
 | `unauthenticated` | 401 | トークンが無い・署名が不正・トークンの持ち主が存在しない・無効化されている(クライアントは再ログインを促す) |
 | `token_expired` | 401 | アクセストークンの有効期限切れ(クライアントはリフレッシュトークンでトークンを更新し、元のリクエストをやり直す) |
+| `invalid_credentials` | 401 | ログインの失敗(メールアドレスが無い・パスワードが違うを区別しない) |
+| `invalid_refresh_token` | 401 | リフレッシュトークンが無い・期限切れ・使用済み・端末のログイン状態が無効(クライアントは再ログインを促す) |
 | `forbidden` | 403 | 認証はできたが、その操作の権限が無い(一般ユーザーが他ユーザーのuser_idを指定した等) |
+| `account_disabled` | 403 | アカウントが停止されている(ログインでパスワードが合っていた場合のみ返す) |
+| `email_not_verified` | 403 | メールアドレスの確認が済んでいないので同期APIを使えない |
 | `user_not_found` | 404 | パスパラメーターのuser_idのユーザーが存在しない |
 | `session_not_found` | 404 | 当該ユーザーのsessionとして存在しない(パージ済み・未登録・他ユーザーのもの) |
 | `not_found` | 404 | 存在しないパス |
 | `method_not_allowed` | 405 | そのパスでは使えないメソッド(Allowヘッダーで使えるメソッドを返す) |
 | `not_acceptable` | 406 | Acceptで`application/json`を受け付けていない(GET) |
 | `id_conflicted` | 409 | 登録しようとしたidが別のsessionと衝突している |
+| `email_already_registered` | 409 | サインアップしようとしたメールアドレスは登録済み |
 | `deleted` | 409 | 対象のsessionが削除済み(tombstone)で、編集内容と競合している |
 | `payload_too_large` | 413 | bodyがサイズの上限(10MB)を超えている |
 | `unsupported_media_type` | 415 | Content-Typeが`application/json`でない(media typeはContent-Typeの値を指すHTTPの用語) |
@@ -139,7 +153,7 @@ OpenAPI(実装から自動生成): http://localhost:8080/docs (JSONは http://lo
         - request_existence_checkがtrueの場合、パージ済みの削除はレスポンスに含まれない可能性がある(`POST /users/{user_id}/sessions/existence-check`で整合性チェックを行う)
         - sessionsの並び順はstarted_atの昇順
         - track_pointsの並び順はrecorded_atの昇順
-        - ユーザー機能が実装されていない間はトークンの検証をスルーする形とする
+        - 認証(401・403)は共通事項の「認証と権限」の通り(同期APIはメールアドレスの確認済みが必須)
         - ページングは行わない(開発用データの件数では不要で、カーソルの扱いが複雑になるため)。
           必要になった場合は、このGETではsessionのid・updated_at(tombstoneはdeleted_at)の一覧のみを返し、本体は
           `GET /users/{user_id}/sessions/{session_id}`で1件ずつ(または数件ずつまとめて)取得する形にする
@@ -388,3 +402,79 @@ OpenAPI(実装から自動生成): http://localhost:8080/docs (JSONは http://lo
         - validationチェックの項目は以下の通り
             - session_idsが存在し、配列である
             - session_idsの要素が全てUUID型である
+
+## 認証のendpoints(ブロック2)
+
+トークンを返すendpoint(signup・login・refresh)のレスポンスは共通の形式にする:
+    ```
+    {
+        "access_token": "eyJ...",   (ES256のJWT。有効期限15分)
+        "refresh_token": "...",   (256ビットの乱数をURLセーフなBase64にした文字列。有効期限30日)
+        "token_type": "Bearer",
+        "expires_in": 900,   (アクセストークンの有効期限までの秒数)
+        "user": { "id": "...", "email": "...", "display_name": "...", "email_verified": false, "role": "user" }
+    }
+    ```
+端末ごとのログイン状態(`auth_sessions`)とリフレッシュトークンの系列はセットで管理する。端末IDはクライアントが初回起動時に生成した
+UUIDを受け取る(ハードウェアの情報はOSが提供しないため)。同じ端末で再びログインした場合は、その端末の古いログイン状態を無効にする。
+
+- POST /auth/signup
+    body: { "email": "...", "password": "...", "display_name": "...", "device_id": "<UUID>", "device_name": "..." }
+        - email: メールアドレスの形式、255文字以内。大文字小文字を区別せず一意(保存時に小文字にする)
+        - password: 8文字以上128文字以内。文字の種類は強制しない(MFAは無い。NISTの「パスワードのみなら15文字以上」の推奨とは
+          意識的に違えている)
+        - display_name: 省略可(1〜50文字)。省略時はメールアドレスの@より前
+        - device_name: 省略可(端末の表示名。100文字以内)
+    レスポンス: 201 + トークンの形式。作成直後は`email_verified`がfalse(ログインはできるが同期はできない)
+    エラー: 409(`email_already_registered`)、422
+    備考:
+        - 登録済みのメールアドレスを409で返すと、メールアドレスの登録の有無が分かってしまう。個人向けアプリなので許容する
+          (本案件の要件定義に持ち帰る観点)
+        - メールアドレスの確認コードの送信・確認はブロック3で追加する
+
+- POST /auth/login
+    body: { "email": "...", "password": "...", "device_id": "<UUID>", "device_name": "..." }
+    レスポンス: 200 + トークンの形式
+    処理:
+        1. メールアドレスのユーザーが無い、またはパスワードが違う場合: 401(`invalid_credentials`)
+           (ユーザーが無い場合もダミーのハッシュで検証して、応答時間で区別できないようにする)
+        2. アカウントが停止(`disabled_at`がnullでない)されている場合: 403(`account_disabled`)
+        3. 同じユーザー・同じ端末の有効なログイン状態があれば無効にし、新しいログイン状態とリフレッシュトークンを作ってトークンを返す
+    備考: メールアドレスの確認が済んでいなくてもログインできる
+
+- POST /auth/refresh
+    body: { "refresh_token": "..." }   (Authorizationヘッダーは不要。アクセストークンが期限切れでも使えるようにするため)
+    レスポンス: 200 + トークンの形式(新しいリフレッシュトークンを含む)
+    処理:
+        1. リフレッシュトークンのハッシュで検索し、無い・期限切れ・端末のログイン状態が無効・ユーザーが無いか停止中の場合:
+           401(`invalid_refresh_token`)
+        2. 使用済み(`used_at`がnullでない)の場合: 盗まれた可能性があるので、その端末のログイン状態を無効にして
+           401(`invalid_refresh_token`)。その端末では再ログインが必要になる(アカウント自体はロックしない。圏外でレスポンスが
+           届かずにクライアントが古いトークンで再試行した場合も、この扱いになる)
+        3. 使ったトークンに`used_at`を入れ、新しいリフレッシュトークン(有効期限は今から30日)とアクセストークンを発行する
+           (ローテーション。使うたびに期限が延びる)
+
+- POST /auth/logout
+    header: Authorization: Bearer <アクセストークン>
+    レスポンス: 204
+    処理: トークンの`sid`の端末のログイン状態を無効にする。その端末のリフレッシュトークンもアクセストークンも、すぐに使えなくなる
+    備考: アクセストークンが期限切れの場合、クライアントは先にrefreshしてからlogoutする。refreshも失敗した場合は、
+          サーバー側のログイン状態は既に無効なので、クライアントはトークンを消すだけでよい
+
+- GET /users/me
+    レスポンス: 200 { "id", "email", "display_name", "email_verified", "role", "created_at" }
+
+- PATCH /users/me
+    body: { "display_name": "..." }   (1〜50文字。それ以外の項目は422。メールアドレスの変更は11月以降、
+          パスワードの変更はブロック3の別のendpoint)
+    レスポンス: 200 + GET /users/meと同じ形式
+
+- DELETE /users/me
+    レスポンス: 204
+    処理: ユーザーを物理削除する(tombstoneは残さない)。外部キーのON DELETE CASCADEで、sessions・track_points・
+          端末のログイン状態・リフレッシュトークンも一緒に消える
+    備考:
+        - アプリの審査(App Storeの審査ガイドライン5.1.1(v)、Google Playのアカウント削除の要件)では、アプリ内からのアカウントと
+          関連データの削除が求められる。停止(`disabled_at`)では足りない
+        - 他の端末は次のリクエストで401(`unauthenticated`)になる
+        - 将来のローカルアカウントへの変更(通常→ローカル)は、このendpointでサーバーのデータを削除し、端末のデータを残す形で行う
