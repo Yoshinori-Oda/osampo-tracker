@@ -1,6 +1,7 @@
 // ignore_for_file: empty_constructor_bodies
 
 import 'dart:math';
+import 'package:drift/drift.dart' show BooleanExpressionOperators;
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../database/app_database.dart';
 import '../models/move_method.dart';
