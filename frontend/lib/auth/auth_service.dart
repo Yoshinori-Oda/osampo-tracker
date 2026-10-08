@@ -85,7 +85,9 @@ class AuthService {
       response = await _client
         .post(Uri.parse('$_baseUrl$path'), headers: _jsonHeaders, body: jsonEncode(payload))
         .timeout(_timeoutDuration);
-    } catch (_) {
+    } catch (e) {
+      // 接続先の誤り(実機・Androidエミュレータのlocalhost)・平文HTTPの禁止・タイムアウト等を見分けるため、原因を出す
+      print('[auth] $path failed: $e ($_baseUrl)');
       throw const AuthException(AuthException.network);
     }
     if (response.statusCode ~/ 100 != 2) {
@@ -133,7 +135,8 @@ class AuthService {
           body: jsonEncode({'refresh_token': current.refreshToken}),
         )
         .timeout(_timeoutDuration);
-    } catch (_) {
+    } catch (e) {
+      print('[auth] /auth/refresh failed: $e');
       return RefreshOutcome.failed;
     }
     if (response.statusCode == 200) {
