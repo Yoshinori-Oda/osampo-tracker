@@ -4,5 +4,6 @@
 .pytest_cache/
 .ruff_cache/
 host_check_logs/
+secrets/
 docs/
 db/

@@ -54,6 +54,7 @@ Claude Code がこのプロジェクトで作業する際のコンテキスト�
 
 - backend: Dockerで動かすバックエンド(FastAPIのapi + 定期実行のworker + PostgreSQL)
   - app/: FastAPIのアプリ本体(config.py: 設定、db.py: DB接続、main.py: アプリ、worker.py: 定期実行、
+    security.py: パスワードのハッシュ・トークン、cli.py: 管理用のコマンド(シード・アカウントの停止)、
     routers/・schemas/・services/・models/: レイヤ。詳細は`backend/docs/バックエンド構成.md`)
   - tests/: pytest
   - pyproject.toml・uv.lock: 依存パッケージ(uv)。Dockerfile: api・worker共通のイメージ
@@ -261,4 +262,14 @@ scripts/run_checks.sh <run_id> test -t tests/test_models.py
 docker compose down -v
 scripts/run_checks.sh <run_id> up migrate
 docker compose exec -T db psql -U osampo_migrator -d location_db < db/seed.sql
+# 開発用のユーザー(管理者・テストユーザー1111...・メール未確認のユーザー)のパスワード等を設定する。ログイン情報が表示される
+docker compose run --rm api python -m app.cli seed-dev
+
+# アクセストークンを署名するES256の鍵のペアを作る(初回のみ。backend/secrets/はコミットしない)
+mkdir -p secrets
+openssl ecparam -name prime256v1 -genkey -noout -out secrets/jwt_private.pem
+openssl ec -in secrets/jwt_private.pem -pubout -out secrets/jwt_public.pem
+# アカウントの停止・解除(管理者の画面ができるまでの手段)
+docker compose run --rm api python -m app.cli disable-user <email>
+docker compose run --rm api python -m app.cli enable-user <email>
 ```

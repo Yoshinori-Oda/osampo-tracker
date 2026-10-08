@@ -47,6 +47,8 @@ services:
       - ./app:/app/app
       - ./tests:/app/tests
       - ./migrations:/app/migrations
+      # アクセストークン(JWT)を署名するES256の鍵のペア。コミットしない(backend/secrets/は.gitignore済み)
+      - ./secrets:/app/secrets:ro
     depends_on:
       db:
         condition: service_healthy

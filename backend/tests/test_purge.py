@@ -1,13 +1,14 @@
-"""tombstoneの長周期パージ(app/services/purge_service.py)のテスト。"""
+"""長周期パージ(app/services/purge_service.py)のテスト。"""
 
+import uuid
 from datetime import UTC, datetime, timedelta
 
 from geoalchemy2 import WKTElement
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models import TrackingSession, TrackPoint, User
-from app.services.purge_service import purge_expired_tombstones
+from app.models import AuthSession, RefreshToken, TrackingSession, TrackPoint, User
+from app.services.purge_service import purge_expired_auth, purge_expired_tombstones
 
 RETENTION_DAYS = 90
 
@@ -64,3 +65,42 @@ async def test_purge_with_nothing_to_delete_returns_zero(db_session: AsyncSessio
     await add_session(db_session, user, "生きている", None)
 
     assert await purge_expired_tombstones(db_session, RETENTION_DAYS) == 0
+
+
+REFRESH_TOKEN_TTL_DAYS = 30
+
+
+async def add_refresh_token(db: AsyncSession, auth_session: AuthSession, expires_at: datetime) -> None:
+    db.add(
+        RefreshToken(
+            auth_session_id=auth_session.id,
+            token_hash=uuid.uuid4().hex + uuid.uuid4().hex,
+            expires_at=expires_at,
+        )
+    )
+    await db.flush()
+
+
+async def test_purges_expired_refresh_tokens_and_old_revoked_logins(
+    db_session: AsyncSession, user: User
+):
+    now = datetime.now(UTC)
+    active = AuthSession(user_id=user.id, device_id=uuid.uuid4())
+    recently_revoked = AuthSession(user_id=user.id, device_id=uuid.uuid4(), revoked_at=now - timedelta(days=1))
+    old_revoked = AuthSession(
+        user_id=user.id, device_id=uuid.uuid4(), revoked_at=now - timedelta(days=REFRESH_TOKEN_TTL_DAYS + 1)
+    )
+    db_session.add_all([active, recently_revoked, old_revoked])
+    await db_session.flush()
+    await add_refresh_token(db_session, active, now + timedelta(days=10))
+    await add_refresh_token(db_session, active, now - timedelta(seconds=1))  # 期限切れ
+
+    tokens, auth_sessions = await purge_expired_auth(db_session, REFRESH_TOKEN_TTL_DAYS)
+
+    assert (tokens, auth_sessions) == (1, 1)
+    remaining_sessions = set(await db_session.scalars(select(AuthSession.id).where(AuthSession.user_id == user.id)))
+    assert remaining_sessions == {active.id, recently_revoked.id}
+    remaining_tokens = await db_session.scalar(
+        select(func.count()).select_from(RefreshToken).where(RefreshToken.auth_session_id == active.id)
+    )
+    assert remaining_tokens == 1

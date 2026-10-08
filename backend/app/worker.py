@@ -12,19 +12,28 @@ from apscheduler.schedulers.asyncio import AsyncIOScheduler
 
 from app.config import settings
 from app.db import SessionLocal
-from app.services.purge_service import purge_expired_tombstones
+from app.services.purge_service import purge_expired_auth, purge_expired_tombstones
 
 logger = logging.getLogger(__name__)
 
 
 async def purge_job() -> None:
-    """パージ期間を過ぎたtombstoneを物理削除する。失敗してもworkerは止めず、次の実行で再び試みる。"""
+    """パージ期間を過ぎたtombstoneと、期限切れのリフレッシュトークン・無効にした端末のログイン状態を物理削除する。
+
+    失敗してもworkerは止めず、次の実行で再び試みる。
+    """
     try:
         async with SessionLocal() as db:
             purged = await purge_expired_tombstones(db, settings.purge_retention_days)
-        logger.info("purged %d expired tombstone(s)", purged)
+            tokens, auth_sessions = await purge_expired_auth(db, settings.refresh_token_ttl_days)
+        logger.info(
+            "purged %d expired tombstone(s), %d refresh token(s), %d auth session(s)",
+            purged,
+            tokens,
+            auth_sessions,
+        )
     except Exception:
-        logger.exception("failed to purge expired tombstones")
+        logger.exception("failed to purge")
 
 
 async def main() -> None:

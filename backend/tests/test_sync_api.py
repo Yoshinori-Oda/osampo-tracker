@@ -119,9 +119,9 @@ async def test_initial_fetch_returns_alive_sessions_with_track_points(
 
 
 async def test_fetch_does_not_return_other_users_sessions(
-    api_client: AsyncClient, user: User, other_user: User
+    api_client: AsyncClient, user: User, other_api_client: AsyncClient, other_user: User
 ):
-    await register(api_client, other_user)
+    await register(other_api_client, other_user)
 
     body = await fetch(api_client, user)
 
@@ -181,9 +181,22 @@ async def test_fetch_with_naive_last_synced_at_is_validation_error(
     assert response.json()["code"] == "validation_error"
 
 
-async def test_fetch_for_unknown_user_returns_user_not_found(api_client: AsyncClient):
-    response = await api_client.get(sessions_url(uuid.uuid4()))
+async def test_fetch_other_or_unknown_user_as_user_is_forbidden(
+    api_client: AsyncClient, other_user: User
+):
+    # 一般ユーザーは自分以外のuser_idを指定すると403で止まる(他ユーザーの有無は分からない)
+    for target in (other_user.id, uuid.uuid4()):
+        response = await api_client.get(sessions_url(target))
+        assert response.status_code == 403
+        assert response.json()["code"] == "forbidden"
 
+
+async def test_fetch_as_admin(client_factory, admin_user: User, other_user: User):
+    admin_client = await client_factory(admin_user)
+
+    # 管理者は他ユーザーのsessionsを操作でき、存在しないuser_idなら404
+    assert (await admin_client.get(sessions_url(other_user.id))).status_code == 200
+    response = await admin_client.get(sessions_url(uuid.uuid4()))
     assert response.status_code == 404
     assert response.json()["code"] == "user_not_found"
 
@@ -249,9 +262,9 @@ async def test_resend_with_different_immutable_fields_is_id_conflict(
 
 
 async def test_register_with_other_users_session_id_is_id_conflict(
-    api_client: AsyncClient, user: User, other_user: User
+    api_client: AsyncClient, user: User, other_api_client: AsyncClient, other_user: User
 ):
-    payload = await register(api_client, other_user)
+    payload = await register(other_api_client, other_user)
 
     # 中身が同じでも、他ユーザーのsessionのidなら衝突として扱う
     response = await api_client.post(sessions_url(user.id), json=payload)
@@ -374,9 +387,9 @@ async def test_edit_deleted_session_is_deleted_conflict(api_client: AsyncClient,
 
 
 async def test_edit_other_users_or_unknown_session_returns_session_not_found(
-    api_client: AsyncClient, user: User, other_user: User
+    api_client: AsyncClient, user: User, other_api_client: AsyncClient, other_user: User
 ):
-    others = await register(api_client, other_user)
+    others = await register(other_api_client, other_user)
 
     for session_id in (others["id"], str(uuid.uuid4())):
         response = await api_client.patch(session_url(user.id, session_id), json=edit_payload())
@@ -470,12 +483,12 @@ async def test_restore_unknown_session_returns_session_not_found(
 
 
 async def test_existence_check_returns_ids_not_alive_for_the_user(
-    api_client: AsyncClient, user: User, other_user: User
+    api_client: AsyncClient, user: User, other_api_client: AsyncClient, other_user: User
 ):
     alive = await register(api_client, user)
     deleted = await register(api_client, user)
     await api_client.delete(session_url(user.id, deleted["id"]))
-    others = await register(api_client, other_user)
+    others = await register(other_api_client, other_user)
     unknown = str(uuid.uuid4())
 
     response = await api_client.post(

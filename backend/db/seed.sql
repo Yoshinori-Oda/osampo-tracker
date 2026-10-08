@@ -2,8 +2,9 @@
 TRUNCATE TABLE users CASCADE;
 
 -- 1. dummy data for users table
-INSERT INTO users (id, email) VALUES
-('11111111-1111-1111-1111-111111111111', 'testuser@example.com')
+-- パスワード等の認証の情報は、この後に`python -m app.cli seed-dev`で設定する(argon2のハッシュはSQLでは作れないため)
+INSERT INTO users (id, email, display_name) VALUES
+('11111111-1111-1111-1111-111111111111', 'testuser@example.com', 'テストユーザー')
 ON CONFLICT (email) DO NOTHING;
 
 -- 2. dummy data for sessions table

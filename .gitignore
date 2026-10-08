@@ -9,6 +9,8 @@ Thumbs.db
 # backend (Python)
 # 秘密情報を含むのでコミットしない (項目は backend/docs/バックエンド構成.md)
 backend/.env
+# アクセストークンを署名するES256の鍵のペア
+backend/secrets/
 backend/.venv/
 backend/host_check_logs/
 __pycache__/

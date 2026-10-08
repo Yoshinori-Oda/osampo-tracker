@@ -42,7 +42,7 @@ async def test_app_role_can_write_and_read_session_with_track_points(
 ):
     session = AsyncSession(bind=app_connection, join_transaction_mode="create_savepoint")
 
-    user = User(email=f"{uuid.uuid4()}@example.com")
+    user = User(email=f"{uuid.uuid4()}@example.com", display_name="テスト")
     session.add(user)
     await session.flush()
 
@@ -91,7 +91,7 @@ async def test_app_role_can_write_and_read_session_with_track_points(
 async def test_track_points_relationship_is_not_lazy_loaded(app_connection: AsyncConnection):
     # 非同期では暗黙の遅延ロードができないので、読み込み忘れはエラーになる(lazy="raise")
     session = AsyncSession(bind=app_connection, join_transaction_mode="create_savepoint")
-    user = User(email=f"{uuid.uuid4()}@example.com")
+    user = User(email=f"{uuid.uuid4()}@example.com", display_name="テスト")
     session.add(user)
     await session.flush()
     tracking_session = TrackingSession(
@@ -122,7 +122,7 @@ MIN_ALTITUDE = 12.345678901234
 
 async def test_altitude_columns_keep_double_precision(app_connection: AsyncConnection):
     session = AsyncSession(bind=app_connection, join_transaction_mode="create_savepoint")
-    user = User(email=f"{uuid.uuid4()}@example.com")
+    user = User(email=f"{uuid.uuid4()}@example.com", display_name="テスト")
     session.add(user)
     await session.flush()
     tracking_session = TrackingSession(

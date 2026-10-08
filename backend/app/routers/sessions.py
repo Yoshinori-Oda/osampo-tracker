@@ -35,6 +35,11 @@ router = APIRouter(prefix="/api/users/{user_id}/sessions", tags=["sessions"])
 _USER_NOT_FOUND = [ErrorCode.USER_NOT_FOUND]
 _USER_OR_SESSION_NOT_FOUND = [ErrorCode.USER_NOT_FOUND, ErrorCode.SESSION_NOT_FOUND]
 _VALIDATION = {422: [ErrorCode.VALIDATION_ERROR]}
+# 全てのエンドポイントでAuthorization: Bearer のアクセストークンが必要。同期はメールアドレスの確認済みが必須
+_AUTH = {
+    401: [ErrorCode.UNAUTHENTICATED, ErrorCode.TOKEN_EXPIRED],
+    403: [ErrorCode.FORBIDDEN, ErrorCode.EMAIL_NOT_VERIFIED],
+}
 _BODY = {
     413: [ErrorCode.PAYLOAD_TOO_LARGE],
     415: [ErrorCode.UNSUPPORTED_MEDIA_TYPE],
@@ -47,7 +52,7 @@ _BODY = {
     response_model=SyncResponse,
     dependencies=[Depends(require_json_accept)],
     responses=error_responses(
-        {404: _USER_NOT_FOUND, 406: [ErrorCode.NOT_ACCEPTABLE], **_VALIDATION}
+        {404: _USER_NOT_FOUND, 406: [ErrorCode.NOT_ACCEPTABLE], **_AUTH, **_VALIDATION}
     ),
 )
 async def fetch_sessions(
@@ -94,7 +99,7 @@ async def fetch_sessions(
                 404: _USER_NOT_FOUND,
                 409: [ErrorCode.ID_CONFLICTED, ErrorCode.DELETED],
                 **_BODY,
-                **_VALIDATION,
+                **_AUTH, **_VALIDATION,
             }
         ),
     },
@@ -125,7 +130,7 @@ async def register_session(
     summary="削除の突き合わせ",
     response_model=ExistenceCheckResponse,
     dependencies=[Depends(require_json_content_type)],
-    responses=error_responses({404: _USER_NOT_FOUND, **_BODY, **_VALIDATION}),
+    responses=error_responses({404: _USER_NOT_FOUND, **_BODY, **_AUTH, **_VALIDATION}),
 )
 async def check_existence(
     user_id: TargetUserId,
@@ -151,7 +156,7 @@ async def check_existence(
             404: _USER_OR_SESSION_NOT_FOUND,
             409: [ErrorCode.DELETED],
             **_BODY,
-            **_VALIDATION,
+            **_AUTH, **_VALIDATION,
         }
     ),
 )
@@ -174,7 +179,7 @@ async def edit_session(
     "/{session_id}",
     summary="削除",
     status_code=status.HTTP_204_NO_CONTENT,
-    responses=error_responses({404: _USER_OR_SESSION_NOT_FOUND, **_VALIDATION}),
+    responses=error_responses({404: _USER_OR_SESSION_NOT_FOUND, **_AUTH, **_VALIDATION}),
 )
 async def delete_session(
     user_id: TargetUserId,
@@ -194,7 +199,7 @@ async def delete_session(
     summary="削除の取り消し",
     response_model=UpdatedAtResponse,
     dependencies=[Depends(require_json_content_type)],
-    responses=error_responses({404: _USER_OR_SESSION_NOT_FOUND, **_BODY, **_VALIDATION}),
+    responses=error_responses({404: _USER_OR_SESSION_NOT_FOUND, **_BODY, **_AUTH, **_VALIDATION}),
 )
 async def restore_session(
     user_id: TargetUserId,

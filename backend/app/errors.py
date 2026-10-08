@@ -15,6 +15,11 @@ class ErrorCode(StrEnum):
     UNAUTHENTICATED = "unauthenticated"  # 401: トークンが無い・不正・持ち主がいない
     TOKEN_EXPIRED = "token_expired"  # 401: アクセストークンの有効期限切れ(クライアントはトークンを更新する)
     FORBIDDEN = "forbidden"  # 403: 認証はできたが、その操作の権限が無い
+    INVALID_CREDENTIALS = "invalid_credentials"  # 401: ログインの失敗(ユーザーが無い・パスワードが違うを区別しない)
+    INVALID_REFRESH_TOKEN = "invalid_refresh_token"  # 401: リフレッシュトークンが無効(クライアントは再ログインする)
+    ACCOUNT_DISABLED = "account_disabled"  # 403: アカウントが停止されている(パスワードが合っていた場合のみ)
+    EMAIL_NOT_VERIFIED = "email_not_verified"  # 403: メールアドレスが未確認なので同期APIを使えない
+    EMAIL_ALREADY_REGISTERED = "email_already_registered"  # 409: サインアップのメールアドレスが登録済み
 
     # リソース
     USER_NOT_FOUND = "user_not_found"  # 404: パスパラメーターのuser_idのユーザーが存在しない

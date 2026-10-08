@@ -32,6 +32,13 @@ class Settings(BaseSettings):
     purge_retention_days: int = 90
     purge_interval_hours: int = 24
 
+    # 認証。ES256の鍵のペア(PEM)はbackend/secrets/に置き、apiにだけマウントする(コミットしない)
+    jwt_private_key_path: str = "/app/secrets/jwt_private.pem"
+    jwt_public_key_path: str = "/app/secrets/jwt_public.pem"
+    access_token_ttl_minutes: int = 15
+    # リフレッシュトークンの有効期限。無効にした端末のログイン状態をパージするまでの期間にも使う
+    refresh_token_ttl_days: int = 30
+
     @property
     def app_database_url(self) -> URL:
         return self._database_url(self.app_db_user, self.app_db_password, self.postgres_db)

@@ -4,11 +4,13 @@ import uuid
 from typing import Annotated
 
 from fastapi import Depends, Request
+from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db import get_session
 from app.errors import AppError, ErrorCode
-from app.services import session_service
+from app.services import auth_service, session_service
+from app.services.auth_service import AuthContext
 
 DbSession = Annotated[AsyncSession, Depends(get_session)]
 
@@ -38,14 +40,38 @@ async def require_json_accept(request: Request) -> None:
         raise AppError(406, ErrorCode.NOT_ACCEPTABLE, "レスポンスはapplication/jsonでのみ返せます")
 
 
-async def verify_user_access(user_id: uuid.UUID, db: DbSession) -> uuid.UUID:
-    """パスパラメーターのuser_idのユーザーを操作してよいかを確認し、user_idを返す。
+# auto_error=False: ヘッダーが無い場合もFastAPI既定の403ではなく、共通の形式の401(unauthenticated)を返すため。
+# OpenAPIの画面の「Authorize」ボタンでアクセストークンを設定できるようにもなる
+_bearer = HTTPBearer(auto_error=False, description="アクセストークン(POST /api/auth/login等で取得)")
 
-    認証(ブロック2)を実装するまではトークンを検証せず、user_idのユーザーが存在するかだけを確認する。
-    認証の実装後は、API設計書の「認証と権限」の順(401→403→404)で判定する。
+
+async def get_auth_context(
+    credentials: Annotated[HTTPAuthorizationCredentials | None, Depends(_bearer)],
+    db: DbSession,
+) -> AuthContext:
+    """Authorization: Bearer のアクセストークンを検証し、認証されたユーザーを返す(できなければ401)。"""
+    if credentials is None:
+        raise AppError(401, ErrorCode.UNAUTHENTICATED, "認証が必要です")
+    return await auth_service.authenticate(db, credentials.credentials)
+
+
+CurrentAuth = Annotated[AuthContext, Depends(get_auth_context)]
+
+
+async def verify_user_access(user_id: uuid.UUID, auth: CurrentAuth, db: DbSession) -> uuid.UUID:
+    """同期APIで、パスパラメーターのuser_idのユーザーを操作してよいかを確認し、user_idを返す。
+
+    API設計書の「認証と権限」の順に判定する: 401(get_auth_context) → 403(forbidden) → 403(email_not_verified)
+    → 404(user_not_found)。一般ユーザーは自分以外のuser_idを指定すると403で止まるので、他ユーザーの有無は分からない。
     """
-    # TODO(ブロック2): トークンの検証(401)と、管理者でなく自分以外のuser_idを指定した場合の403
-    await session_service.ensure_user_exists(db, user_id)
+    me = auth.user
+    if not me.is_admin and me.id != user_id:
+        raise AppError(403, ErrorCode.FORBIDDEN, "この操作の権限がありません")
+    if not me.email_verified:
+        raise AppError(403, ErrorCode.EMAIL_NOT_VERIFIED, "メールアドレスを確認すると同期できます")
+    if me.id != user_id:
+        # 管理者が他ユーザーを指定した場合だけ、そのユーザーの存在を確認する
+        await session_service.ensure_user_exists(db, user_id)
     return user_id
 
 
