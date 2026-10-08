@@ -5,6 +5,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../database/app_database.dart';
 import '../models/move_method.dart';
 import 'tracking_providers.dart';
+import 'auth_providers.dart';
 
 // enums for analytics page state
 enum AnalyticsPeriod { month, year, all }
@@ -125,9 +126,11 @@ class AnalyticsSummaryData {
 final analyticsDataProvider = StreamProvider<AnalyticsSummaryData>((ref) async* {
   final db = ref.watch(databaseProvider);
   final selection = ref.watch(analyticsSelectionProvider);
+  final userId = ref.watch(currentUserIdProvider) ?? '';
 
+  // ログイン中のユーザーのデータだけを集計する
   final completedSessionsQuery = db.select(db.sessions)
-    ..where((tbl) => tbl.endedAt.isNotNull());
+    ..where((tbl) => tbl.userId.equals(userId) & tbl.endedAt.isNotNull());
   
   await for (final completedSessions in completedSessionsQuery.watch()) {
     if (completedSessions.isEmpty) {

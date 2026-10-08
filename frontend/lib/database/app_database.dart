@@ -12,10 +12,32 @@ import '../models/move_method.dart';
 
 part 'app_database.g.dart';
 
+// この端末でログインしたユーザー(サーバーのusersの写し)。schemaVersion 2で追加
+class Users extends Table {
+  // サーバーのユーザーID
+  TextColumn get id => text()();
+  TextColumn get email => text().withDefault(const Constant(''))();
+  TextColumn get displayName => text().withDefault(const Constant(''))();
+  // メールアドレスの確認が済んでいるか(ログイン時・GET /users/meの値を写す)。falseなら同期しない
+  BoolColumn get emailVerified => boolean().withDefault(const Constant(false))();
+  // 差分取得の基準時刻。サーバーが返したsynced_atの文字列をそのまま保存する(nullなら初回の同期)
+  TextColumn get lastSyncedAt => text().nullable()();
+  DateTimeColumn get createdAt => dateTime().withDefault(currentDateAndTime)();
+
+  @override
+  Set<Column> get primaryKey => {id};
+}
+
 class Sessions extends Table {
   // basic info
   TextColumn get id => text()();
-  TextColumn get userId => text()();
+  // 将来のローカルアカウント→通常アカウントへの変更でusers.idを差し替えたときに追随するよう、ON UPDATE CASCADEにする
+  TextColumn get userId => text().references(
+    Users,
+    #id,
+    onDelete: KeyAction.cascade,
+    onUpdate: KeyAction.cascade,
+  )();
   TextColumn get name => text().withLength(min:1, max: 100).nullable()();
   DateTimeColumn get startedAt => dateTime()();
   DateTimeColumn get endedAt => dateTime().nullable()();
@@ -47,7 +69,7 @@ class TrackPoints extends Table {
   RealColumn get altitude => real().nullable()();
 }
 
-@DriftDatabase(tables: [Sessions, TrackPoints])
+@DriftDatabase(tables: [Users, Sessions, TrackPoints])
 class AppDatabase extends _$AppDatabase {
   AppDatabase() : super(_openConnection());
 
@@ -55,11 +77,74 @@ class AppDatabase extends _$AppDatabase {
   AppDatabase.forTesting(super.executor);
 
   @override
-  int get schemaVersion => 1;
+  int get schemaVersion => 2;
 
-  Stream<List<Session>> watchAllSessions() {
+  @override
+  MigrationStrategy get migration => MigrationStrategy(
+    onCreate: (m) => m.createAll(),
+    onUpgrade: (m, from, to) async {
+      if (from < 2) {
+        // usersを作り、既存のsessionsのuser_idのユーザーの行を作ってから、sessions.user_idに外部キーを付ける
+        // (SQLiteは既存の列に外部キーを足せないので、TableMigrationでsessionsを作り直してデータを移す)
+        await m.createTable(users);
+        await customStatement('INSERT OR IGNORE INTO users (id) SELECT DISTINCT user_id FROM sessions');
+        await m.alterTable(TableMigration(sessions));
+        // これまで外部キーが効いておらず、sessionsの削除で残っていたtrack_pointsを片付ける
+        await customStatement('DELETE FROM track_points WHERE session_id NOT IN (SELECT id FROM sessions)');
+      }
+    },
+    beforeOpen: (details) async {
+      // SQLiteは既定で外部キーが無効なので、接続を開くたびに有効にする
+      // (これまでtrack_pointsのON DELETE CASCADEも効いていなかった)
+      await customStatement('PRAGMA foreign_keys = ON');
+    },
+  );
+
+  // ---- users ------------------------------------------------------------------
+
+  // ログイン・新規登録・GET /users/meで受け取ったユーザーの情報を保存する(last_synced_at・created_atは変えない)
+  Future<void> upsertUser({
+    required String id,
+    required String email,
+    required String displayName,
+    required bool emailVerified,
+  }) {
+    return into(users).insertOnConflictUpdate(
+      UsersCompanion.insert(
+        id: id,
+        email: Value(email),
+        displayName: Value(displayName),
+        emailVerified: Value(emailVerified),
+      )
+    );
+  }
+
+  Future<User?> getUser(String userId) =>
+    (select(users)..where((tbl) => tbl.id.equals(userId))).getSingleOrNull();
+
+  Stream<User?> watchUser(String userId) =>
+    (select(users)..where((tbl) => tbl.id.equals(userId))).watchSingleOrNull();
+
+  Future<void> setEmailVerified(String userId, bool verified) =>
+    (update(users)..where((tbl) => tbl.id.equals(userId))).write(UsersCompanion(emailVerified: Value(verified)));
+
+  Future<String?> getLastSyncedAt(String userId) async => (await getUser(userId))?.lastSyncedAt;
+
+  Future<void> setLastSyncedAt(String userId, String? value) {
+    return (update(users)..where((tbl) => tbl.id.equals(userId))).write(
+      UsersCompanion(lastSyncedAt: Value(value))
+    );
+  }
+
+  // ユーザーとそのデータ(sessions・track_points)を端末から消す(アカウントの削除時)。外部キーのCASCADEで消える
+  Future<void> deleteUserData(String userId) =>
+    (delete(users)..where((tbl) => tbl.id.equals(userId))).go();
+
+  // ---- sessions ---------------------------------------------------------------
+
+  Stream<List<Session>> watchAllSessions({required String userId}) {
     return (select(sessions)
-        ..where((tbl) => tbl.status.isNotIn([
+        ..where((tbl) => tbl.userId.equals(userId) & tbl.status.isNotIn([
               Status.inProgress.index,
               Status.deletedUnsynced.index,
             ]))
@@ -206,10 +291,10 @@ class AppDatabase extends _$AppDatabase {
   }
 
   // 削除の突き合わせ(existence-check)で送る、同期済みのセッションのid
-  Future<List<String>> getSyncedSessionIds() async {
+  Future<List<String>> getSyncedSessionIds({required String userId}) async {
     final query = selectOnly(sessions)
       ..addColumns([sessions.id])
-      ..where(sessions.status.equals(Status.synced.index));
+      ..where(sessions.userId.equals(userId) & sessions.status.equals(Status.synced.index));
     final rows = await query.get();
     return rows.map((row) => row.read(sessions.id)!).toList();
   }
@@ -261,9 +346,9 @@ class AppDatabase extends _$AppDatabase {
   }
 
   // クラッシュ・強制終了等で保存/破棄されないまま残ったセッション(起動時リカバリ用)
-  Future<List<Session>> getInProgressSessions() {
+  Future<List<Session>> getInProgressSessions({required String userId}) {
     return (select(sessions)
-        ..where((tbl) => tbl.status.equals(Status.inProgress.index))
+        ..where((tbl) => tbl.userId.equals(userId) & tbl.status.equals(Status.inProgress.index))
         ..orderBy([(tbl) => OrderingTerm.asc(tbl.startedAt)]))
       .get();
   }
@@ -281,9 +366,9 @@ class AppDatabase extends _$AppDatabase {
       .watchSingle();
   }
 
-  Future<List<Session>> getUnsyncedSessions() {
+  Future<List<Session>> getUnsyncedSessions({required String userId}) {
     return (select(sessions)
-      ..where((tbl) => tbl.status.isIn([
+      ..where((tbl) => tbl.userId.equals(userId) & tbl.status.isIn([
             Status.ended.index,
             Status.updated.index,
             Status.deletedUnsynced.index,

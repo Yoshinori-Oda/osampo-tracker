@@ -1,12 +1,15 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../models/recording_phase.dart';
+import '../providers/auth_providers.dart';
 import '../providers/tracking_providers.dart';
+import '../widgets/auth_banner_view.dart';
 import '../widgets/location_banner_view.dart';
 import '../widgets/recording_phase_banner_view.dart';
 import 'recording_page.dart';
 import 'saved_sessions.dart';
 import 'analytics_page.dart';
+import 'settings_page.dart';
 
 class MainPage extends ConsumerStatefulWidget {
   const MainPage({super.key});
@@ -20,13 +23,19 @@ class _MainPageState extends ConsumerState<MainPage> with WidgetsBindingObserver
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
-    // アプリ起動時に一度、他端末での変更を取り込む
-    ref.read(repositoryProvider).requestSync();
+    // アプリ起動時に一度、メールアドレスの確認状態を取り込んでから、他端末での変更を取り込む
+    _refreshProfileAndSync();
     // 初回フレーム描画後(ダイアログ表示に必要なNavigatorのmoutを待ってから)、
     // クラッシュ等で保存/破棄されないまま残ったセッションがないか確認する
     WidgetsBinding.instance.addPostFrameCallback((_) {
       ref.read(trackingServiceProvider).recoverOrphanedSessions();
     });
+  }
+
+  Future<void> _refreshProfileAndSync() async {
+    await ref.read(authControllerProvider.notifier).refreshProfile();
+    if (!mounted) return;
+    ref.read(repositoryProvider).requestSync();
   }
 
   @override
@@ -39,7 +48,7 @@ class _MainPageState extends ConsumerState<MainPage> with WidgetsBindingObserver
   void didChangeAppLifecycleState(AppLifecycleState state) {
     // バックグラウンドから復帰した際にも同期しておく
     if (state == AppLifecycleState.resumed) {
-      ref.read(repositoryProvider).requestSync();
+      _refreshProfileAndSync();
     }
     // 収録中でなければバックグラウンドで位置情報の購読を止め、復帰時に再開する。
     // 復帰時は、設定アプリでの位置情報サービス/権限の変更がストリームのonErrorだけでは
@@ -51,10 +60,16 @@ class _MainPageState extends ConsumerState<MainPage> with WidgetsBindingObserver
   Widget build(BuildContext context) {
     final currentIndex = ref.watch(bottomNavIndexProvider);
 
+    // 同期できない状態から戻ったら(再ログイン・メールアドレスの確認)、止まっていた同期を再開する
+    ref.listen<bool>(authControllerProvider.select((auth) => auth.value?.canSync ?? false), (previous, next) {
+      if (previous == false && next) ref.read(repositoryProvider).requestSync();
+    });
+
     // バナーが1つも表示されない間はSafeAreaの上部paddingも含めてスペースを確保しない
     final locationBannerActive = ref.watch(locationBannerProvider).value?.isActive ?? false;
     final recordingPhase = ref.watch(recordingPhaseProvider).value ?? RecordingPhase.idle;
-    final hasAnyBanner = locationBannerActive || recordingPhase != RecordingPhase.idle;
+    final authBannerActive = AuthBannerView.isActive(ref.watch(authControllerProvider).value);
+    final hasAnyBanner = locationBannerActive || recordingPhase != RecordingPhase.idle || authBannerActive;
 
     final pages = [
       const RecordingPage(),
@@ -65,22 +80,7 @@ class _MainPageState extends ConsumerState<MainPage> with WidgetsBindingObserver
         }
       ),
       const AnalyticsPage(),
-      const Scaffold(
-        body: Center(
-          child: Column(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              Icon(Icons.history, size: 64, color: Colors.grey),
-              SizedBox(height: 16),
-              Text(
-                'オプション\n(未実装)',
-                textAlign: TextAlign.center,
-                style: TextStyle(color: Colors.grey, fontSize: 16)
-              )
-            ]
-          )
-        )
-      ),
+      const SettingsPage(),
     ];
 
     // バナーの分だけステータスバー避けのpaddingを上に1回だけ充てる。
@@ -95,7 +95,8 @@ class _MainPageState extends ConsumerState<MainPage> with WidgetsBindingObserver
             child: Column(
               children: [
                 const RecordingPhaseBannerView(),
-                const LocationBannerView()
+                const LocationBannerView(),
+                const AuthBannerView()
               ]
             )
           ),

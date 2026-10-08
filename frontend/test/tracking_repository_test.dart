@@ -96,8 +96,10 @@ void main() {
   late _FakeApi api;
   late _MemorySyncStateStore store;
 
-  setUp(() {
+  setUp(() async {
     db = AppDatabase.forTesting(NativeDatabase.memory());
+    // sessions.user_idはusersへの外部キーなので、ログイン中のユーザーの行を先に作っておく
+    await db.upsertUser(id: _userId, email: 'test@example.com', displayName: 'test', emailVerified: true);
     api = _FakeApi();
     store = _MemorySyncStateStore();
     // pushの後のpullは、特に指定しなければ空の差分を返す
@@ -108,6 +110,7 @@ void main() {
 
   TrackingRepository createRepository({
     DeleteConflictChoice conflictChoice = DeleteConflictChoice.discard,
+    bool Function()? canSync,
   }) {
     final repository = TrackingRepository(
       db,
@@ -116,15 +119,16 @@ void main() {
       syncStateStore: store,
       baseUrl: _baseUrl,
       onDeleteConflict: (_) async => conflictChoice,
+      canSync: canSync,
     );
     addTearDown(repository.dispose);
     return repository;
   }
 
-  Future<void> insertSession(String id, Status status) async {
+  Future<void> insertSession(String id, Status status, {String userId = _userId}) async {
     await db.into(db.sessions).insert(SessionsCompanion.insert(
       id: id,
-      userId: _userId,
+      userId: userId,
       name: const Value('朝の散歩'),
       startedAt: DateTime.utc(2026, 10, 1, 8),
       endedAt: Value(DateTime.utc(2026, 10, 1, 8, 30)),
@@ -320,6 +324,41 @@ void main() {
       await db.deleteSession(session: (await findSession('s1'))!);
 
       expect((await findSession('s1'))!.status, Status.deletedUnsynced);
+    });
+  });
+
+  group('auth', () {
+    test('同期できない状態(未ログイン・メール未確認・再ログイン待ち)では通信しない', () async {
+      await insertSession('s1', Status.ended);
+      final repository = createRepository(canSync: () => false);
+
+      expect(await repository.syncDiff(), isFalse);
+      await repository.requestSync();
+
+      expect(api.requests, isEmpty);
+      expect((await findSession('s1'))!.status, Status.ended);
+    });
+
+    test('他のユーザーのセッションは送らない', () async {
+      const otherUserId = '22222222-2222-2222-2222-222222222222';
+      await db.upsertUser(id: otherUserId, email: 'other@example.com', displayName: 'other', emailVerified: true);
+      await insertSession('mine', Status.ended);
+      await insertSession('others', Status.ended, userId: otherUserId);
+      api.on('POST', _sessionsPath, (_) => _updatedAt(201, '2026-10-06T01:00:00Z'));
+
+      expect(await createRepository().syncDiff(), isTrue);
+
+      expect(api.requestsTo('POST', _sessionsPath).map((r) => _bodyOf(r)['id']), ['mine']);
+      expect((await findSession('others'))!.status, Status.ended);
+    });
+
+    test('last_synced_atは指定しなければusersの行に保存する', () async {
+      final repository = TrackingRepository(db, _userId, client: api.client, baseUrl: _baseUrl);
+      addTearDown(repository.dispose);
+
+      expect(await repository.syncDiff(), isTrue);
+
+      expect(await db.getLastSyncedAt(_userId), _syncedAt);
     });
   });
 }

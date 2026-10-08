@@ -69,7 +69,9 @@ Claude Code がこのプロジェクトで作業する際のコンテキスト�
 - frontend: Flutterによるモバイルアプリ本体(`flutter create`の出力から開発)
   - docs/: ユーザー機能追加に伴うfrontendの変更予定(下記「ドキュメント索引」)
   - lib/
-    - database/: Drift定義(ローカルSQLite)
+    - auth/: 認証(ログイン・トークンの更新・ログアウト・アカウントの削除)、トークンのsecure storageへの保存、
+      アクセストークンを付けるHTTPクライアント(authorized_client.dart)
+    - database/: Drift定義(ローカルSQLite)。ログインしたユーザー(users)ごとにデータを分ける
     - repositories/: リモート同期ロジック(push/pull/競合解決)
     - services/: tracking_service.dart(位置情報監視・収録の状態管理の中心)、
       location_stream_settings.dart(位置情報ストリームのプラットフォーム別設定)
@@ -77,8 +79,10 @@ Claude Code がこのプロジェクトで作業する際のコンテキスト�
       LocationBannerState/LocationBannerKind(位置情報バナーの状態)
     - providers/: Riverpodのprovider定義
     - views/: 画面(main_page / recording_page / saved_sessions / session_detail_view /
-      save_or_discard_page / gps_help_page など)
-    - widgets/: 全タブ共通のバナー(location_banner_view / recording_phase_banner_view)など
+      save_or_discard_page / gps_help_page / settings_page、auth/のログイン・新規登録 など)。
+      起動時の画面は`main.dart`のAuthGate(未ログインならログイン画面)
+    - widgets/: 全タブ共通のバナー(location_banner_view / recording_phase_banner_view /
+      auth_banner_view)など
     - utils/: navigatorKeyやダイアログ等、UI外から呼ぶための小物。save_or_discard_screen.dartは
       保存/破棄画面を開く共通の入口`showSaveOrDiscardScreen()`
   - android/, ios/: 各OSの端末設定

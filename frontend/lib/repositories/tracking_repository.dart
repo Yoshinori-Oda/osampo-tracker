@@ -2,7 +2,6 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 import 'package:http/http.dart' as http;
-import 'package:shared_preferences/shared_preferences.dart';
 import 'package:uuid/uuid.dart';
 import '../database/app_database.dart';
 import '../models/recording_session.dart';
@@ -36,24 +35,21 @@ abstract class SyncStateStore {
   Future<void> clearLastSyncedAt();
 }
 
-class SharedPreferencesSyncStateStore implements SyncStateStore {
-  static const String _key = 'last_synced_at';
-  final SharedPreferencesAsync _prefs = SharedPreferencesAsync();
+/// ローカルDBのusers.last_synced_atに、ユーザーごとに保存する実装
+class UserSyncStateStore implements SyncStateStore {
+  final AppDatabase _db;
+  final String _userId;
+
+  UserSyncStateStore(this._db, this._userId);
 
   @override
-  Future<String?> getLastSyncedAt() async {
-    try {
-      return await _prefs.getString(_key);
-    } catch (e) {
-      return null;
-    }
-  }
+  Future<String?> getLastSyncedAt() => _db.getLastSyncedAt(_userId);
 
   @override
-  Future<void> setLastSyncedAt(String value) => _prefs.setString(_key, value);
+  Future<void> setLastSyncedAt(String value) => _db.setLastSyncedAt(_userId, value);
 
   @override
-  Future<void> clearLastSyncedAt() => _prefs.remove(_key);
+  Future<void> clearLastSyncedAt() => _db.setLastSyncedAt(_userId, null);
 }
 
 /// ローカルのDB(Drift)とAPIサーバー(backend/docs/API設計ドラフト.md)の同期。
@@ -65,6 +61,10 @@ class TrackingRepository {
   final String _userId;
   final String _baseUrl;
   final Future<DeleteConflictChoice> Function(Session session)? onDeleteConflict;
+  // 同期してよいか(ログイン中・メールアドレスが確認済み・再ログイン不要)。falseの間は通信しない
+  final bool Function() _canSync;
+  // 外から渡されたクライアント(認証付きで共有している)はdisposeで閉じない
+  final bool _ownsClient;
   Timer? _retryTimer;
 
   bool get isSchedulingRetry => _retryTimer != null;
@@ -84,9 +84,12 @@ class TrackingRepository {
     this.onDeleteConflict,
     SyncStateStore? syncStateStore,
     String? baseUrl,
+    bool Function()? canSync,
   }) : _client = client ?? http.Client(),
-       _syncState = syncStateStore ?? SharedPreferencesSyncStateStore(),
-       _baseUrl = baseUrl ?? defaultBaseUrl {
+       _ownsClient = client == null,
+       _syncState = syncStateStore ?? UserSyncStateStore(_db, _userId),
+       _baseUrl = baseUrl ?? defaultBaseUrl,
+       _canSync = canSync ?? (() => true) {
     // for test: delete last_synced_at every re-build
     _clearLastSyncedAtForTest();
   }
@@ -113,6 +116,7 @@ class TrackingRepository {
 
   // make sync action if nothing waiting for sync, or wait for next time of every 5 min-activating timer
   Future<void> requestSync() async {
+    if (!_canSync()) return;
     if (isSchedulingRetry) return;
     if (isSyncing) {
       _startRetryTimer();
@@ -131,6 +135,8 @@ class TrackingRepository {
 
     _retryTimer = Timer(const Duration(minutes: 5), () async {
       _retryTimer = null;
+      // 再ログインが必要になった等で同期できなくなっていたら、再試行をやめる(条件が戻ったらrequestSyncで再開する)
+      if (!_canSync()) return;
       final isSucceeded = await syncDiff();
       if (!isSucceeded) {
         _startRetryTimer();
@@ -146,6 +152,7 @@ class TrackingRepository {
   // push → (削除と編集の競合の解決) → pull の順に同期する
   // return bool of succeeded/failed to manage sync timer
   Future<bool> syncDiff() async {
+    if (!_canSync()) return false;
     bool isSucceeded = false;
     print('[sync] start syncing');
     try {
@@ -191,7 +198,7 @@ class TrackingRepository {
   // push all unsynced sessions
   // 想定外のエラー・削除競合はどちらも「これ以上このサイクルで通信を続けない」シグナルとして扱う
   Future<PushResult> pushUnsyncedSessions() async {
-    final unsyncedSessions = await _db.getUnsyncedSessions();
+    final unsyncedSessions = await _db.getUnsyncedSessions(userId: _userId);
 
     for (final session in unsyncedSessions) {
       if (session.status == Status.ended) {
@@ -415,7 +422,7 @@ class TrackingRepository {
   // 削除の突き合わせ。同期済みのセッションのうち、今回のpullで受け取らなかったもののidを送り、
   // サーバーに(生きているsessionとして)存在しないものをローカルから削除する
   Future<bool> _checkExistence(Set<String> receivedIds) async {
-    final sessionIds = (await _db.getSyncedSessionIds())
+    final sessionIds = (await _db.getSyncedSessionIds(userId: _userId))
       .where((id) => !receivedIds.contains(id))
       .toList();
     final response = await _client
@@ -513,7 +520,7 @@ class TrackingRepository {
   }
 
   // 起動時リカバリ用: 孤立したinProgressセッションとそのtrackpoints
-  Future<List<Session>> getInProgressSessions() => _db.getInProgressSessions();
+  Future<List<Session>> getInProgressSessions() => _db.getInProgressSessions(userId: _userId);
 
   Future<List<TrackPoint>> getTrackPointsForSession(String sessionId) {
     return _db.getTrackPointsForSession(sessionId);
@@ -545,6 +552,6 @@ class TrackingRepository {
 
   void dispose() {
     _stopReryTimer();
-    _client.close();
+    if (_ownsClient) _client.close();
   }
 }

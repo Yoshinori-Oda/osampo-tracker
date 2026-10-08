@@ -7,6 +7,7 @@ import '../models/recording_session.dart';
 import '../models/location_banner.dart';
 import '../models/recording_phase.dart';
 import '../utils/delete_conflict_dialog.dart';
+import 'auth_providers.dart';
 
 // DB provider
 final databaseProvider = Provider<AppDatabase>((ref) {
@@ -15,13 +16,17 @@ final databaseProvider = Provider<AppDatabase>((ref) {
   return db;
 });
 
-// repository provider
+// repository provider。ログイン中のユーザーごとに作る(ログイン画面の間は読まれない)
 final repositoryProvider = Provider<TrackingRepository>((ref) {
   final db = ref.watch(databaseProvider);
+  final userId = ref.watch(currentUserIdProvider);
+  if (userId == null) throw StateError('ログインしていない間はTrackingRepositoryを使えません');
   final repo = TrackingRepository(
     db,
-    '11111111-1111-1111-1111-111111111111',
+    userId,
+    client: ref.watch(authorizedClientProvider),
     onDeleteConflict: showDeleteConflictDialog,
+    canSync: () => ref.read(authControllerProvider).value?.canSync ?? false,
   );
   ref.onDispose(() => repo.dispose());
   return repo;
@@ -74,7 +79,9 @@ final locationBannerProvider = StreamProvider<LocationBannerState>((ref) {
 // for sessions list view
 final sessionsStreamProvider = StreamProvider<List<Session>>((ref) {
   final db = ref.watch(databaseProvider);
-  return db.watchAllSessions();
+  final userId = ref.watch(currentUserIdProvider);
+  if (userId == null) return Stream.value(const []);
+  return db.watchAllSessions(userId: userId);
 });
 
 // for ended session detail view
