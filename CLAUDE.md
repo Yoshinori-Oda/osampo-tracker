@@ -223,6 +223,13 @@ Claude Code がこのプロジェクトで作業する際のコンテキスト�
   効いているか確認する(`.dart_tool/package_config.json`の取り合い)
 - 2026-09-15〜09-28に書かれたコンテナ環境依存の記述は正規コンテナに当てはまらないことがある
   (`docs/history.md`)
+- mainとworktreeの`backend`はcomposeのプロジェクト名(`backend`)・DBのボリュームを共有する。ユーザーの登録し直しは不要だが、
+  古いコンテナが残ると`secrets/`のマウントが反映されずログインだけが500になる。おかしいときは`down`→`up`し直す
+- シミュレータのアプリだけがAPIに繋がらない(タイムアウトし、APIのログにも届かない)ときは、Macの`127.0.0.1:8080`を
+  Docker以外(VSCodeのプロセス等)が待ち受けていないか`lsof -nP -iTCP:8080 -sTCP:LISTEN`で確認する
+  (`yoda-container/docs/troubleshooting.md`の「ホストのポートをVSCodeのプロセスが横取りする」)
+- Driftのクエリで`&`・`|`を使うファイルでは`package:drift/drift.dart`をimportする。`flutter_secure_storage`は11系を使う
+  (9系は`geolocator`とwin32が衝突する)
 
 ## デバッグ Tips
 
