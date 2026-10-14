@@ -3,7 +3,6 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:test_tracking_01/auth/auth_service.dart';
 import 'package:test_tracking_01/providers/auth_providers.dart';
-import 'package:test_tracking_01/views/auth/auth_error_messages.dart';
 import 'package:test_tracking_01/views/auth/email_verification_page.dart';
 
 // 確認コードの入力画面が、docs/design/screens.mdの「auth/email_verification_page.dart」の仕様どおりに動くことの確認。
@@ -193,7 +192,7 @@ void main() {
       expect(_resendLabel(tester), 'コードを再発行(あと60秒)');
     });
 
-    testWidgets('429ならRetry-Afterの秒数だけ待つよう表示し、過ぎたら押せるようになる', (tester) async {
+    testWidgets('429なら時間をあけるよう表示し、Retry-Afterの秒数が過ぎたら押せるようになる', (tester) async {
       final fake = _FakeAuthController(
         sendResults: [const AuthException('too_many_requests', statusCode: 429, retryAfterSeconds: 30)],
       );
@@ -201,11 +200,14 @@ void main() {
 
       await _tapAndSettle(tester, _resendButton);
 
-      expect(find.text(resendWaitMessage(30)), findsOneWidget);
+      // 残りの秒数は再発行のボタンにだけ出す(お知らせの文言には入れない)
+      expect(find.text('再発行には時間をあけてください'), findsOneWidget);
       expect(_enabled(tester, _resendButton), isFalse);
+      expect(_resendLabel(tester), 'コードを再発行(あと30秒)');
 
       await tester.pump(const Duration(seconds: 10));
-      expect(find.text(resendWaitMessage(20)), findsOneWidget);
+      expect(find.text('再発行には時間をあけてください'), findsOneWidget);
+      expect(_resendLabel(tester), 'コードを再発行(あと20秒)');
 
       await tester.pump(const Duration(seconds: 20));
       expect(find.byKey(const Key('verification_message')), findsNothing);

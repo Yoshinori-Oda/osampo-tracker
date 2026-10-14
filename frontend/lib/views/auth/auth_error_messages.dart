@@ -24,6 +24,3 @@ String verificationErrorMessage(AuthException e) => switch (e.code) {
   AuthException.network => '通信できませんでした',
   _ => '確認できませんでした(${e.code})',
 };
-
-// 再発行の間隔・回数の上限(429)のときの表示。secondsは残りの待ち時間
-String resendWaitMessage(int seconds) => '再発行には時間をあけてください(あと$seconds秒)';

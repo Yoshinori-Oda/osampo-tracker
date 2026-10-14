@@ -28,7 +28,7 @@ class _EmailVerificationPageState extends ConsumerState<EmailVerificationPage> {
   Timer? _timer;
   // 再発行のボタンを押せるようになるまでの秒数(画面の中だけで持つ。閉じて開き直すと0に戻る)
   int _resendWait = 0;
-  // 間隔・回数の上限(429)で止められた(カウントダウン中に「時間をあけてください」を出す)
+  // 間隔・回数の上限(429)で止められた(カウントダウン中に「時間をあけてください」を出す。残りの秒数は再発行のボタンに出す)
   bool _rateLimited = false;
   bool _busy = false;
   // 入力欄の下に出すエラー(コードが違う)
@@ -131,7 +131,9 @@ class _EmailVerificationPageState extends ConsumerState<EmailVerificationPage> {
   @override
   Widget build(BuildContext context) {
     final email = ref.watch(currentUserProvider).value?.email;
-    final message = _rateLimited && _resendWait > 0 ? resendWaitMessage(_resendWait) : _message;
+    final message = _rateLimited && _resendWait > 0
+      ? verificationErrorMessage(const AuthException('too_many_requests'))
+      : _message;
 
     return Scaffold(
       appBar: AppBar(title: const Text('メールアドレスの確認')),
