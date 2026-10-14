@@ -138,6 +138,9 @@ async def test_cancel_pending_email(db_session: AsyncSession):
     # 送信済みは取り消せない
     assert await cancel_pending_email(db_session, sent.id) is False
 
+    # UPDATE文で書いたので、手元のオブジェクトではなくDBの値を読み直して確かめる
+    await db_session.refresh(pending)
+    await db_session.refresh(sent)
     assert pending.status == OUTBOX_CANCELLED
     assert pending.completed_at is not None
     assert sent.status == OUTBOX_SENT
