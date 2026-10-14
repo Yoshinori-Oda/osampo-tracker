@@ -16,12 +16,14 @@ from app import security
 from app.errors import AppError, ErrorCode
 from app.models import AuthSession, RefreshToken, User
 from app.schemas.auth import (
+    ChangePasswordRequest,
     LoginRequest,
     SignupRequest,
     TokenResponse,
     UpdateMeRequest,
     UserResponse,
 )
+from app.services import mail_service
 from app.services.email_verification_service import issue_verification_code
 from app.services.session_service import current_time
 
@@ -239,6 +241,45 @@ async def update_me(db: AsyncSession, user: User, body: UpdateMeRequest) -> User
     user.updated_at = await current_time(db)
     await db.commit()
     return user_response(user)
+
+
+PASSWORD_CHANGED_SUBJECT = "【osampo-tracker】パスワードが変更されました"
+PASSWORD_CHANGED_BODY = """osampo-trackerのパスワードが変更されました。
+
+心当たりが無い場合は、第三者にアカウントを使われている可能性があります。
+"""
+
+
+async def change_password(db: AsyncSession, auth: AuthContext, body: ChangePasswordRequest) -> None:
+    """現在のパスワードを確かめてから、新しいパスワードに変える。
+
+    変えた端末以外のログイン状態は全て無効にし(パスワードが漏れていた場合に、他の端末に残った攻撃者を締め出すため)、
+    変更を知らせるメールを本人に送る(乗っ取りに早く気づけるように)。今と同じパスワードへの変更も受け付ける。
+    """
+    user = auth.user
+    if not security.verify_password(body.current_password, user.password_hash):
+        raise AppError(400, ErrorCode.INVALID_CURRENT_PASSWORD, "現在のパスワードが違います")
+
+    now = await current_time(db)
+    user.password_hash = security.hash_password(body.new_password)
+    user.updated_at = now
+    await db.execute(
+        update(AuthSession)
+        .where(
+            AuthSession.user_id == user.id,
+            AuthSession.id != auth.auth_session_id,
+            AuthSession.revoked_at.is_(None),
+        )
+        .values(revoked_at=now)
+    )
+    await mail_service.enqueue_email(
+        db,
+        to_address=user.email,
+        subject=PASSWORD_CHANGED_SUBJECT,
+        body=PASSWORD_CHANGED_BODY,
+        recipient_user_id=user.id,
+    )
+    await db.commit()
 
 
 async def delete_me(db: AsyncSession, user: User) -> None:

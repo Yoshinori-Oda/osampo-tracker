@@ -306,6 +306,53 @@ void main() {
     });
   });
 
+  group('パスワード・表示名の変更', () {
+    AuthorizedClient clientReturning(AuthService service, http.Response response) =>
+      AuthorizedClient(service, inner: MockClient((request) async {
+        requests.add(request);
+        return response;
+      }));
+
+    test('パスワードの変更は現在と新しいパスワードをPUTで送る', () async {
+      final service = createService((_) async => http.Response('', 500));
+      await signIn(service);
+      final client = clientReturning(service, http.Response('', 204));
+
+      await service.changePassword(client, currentPassword: 'old-password', newPassword: 'new-password');
+
+      expect(requests.single.method, 'PUT');
+      expect(requests.single.url.path, '/api/users/me/password');
+      expect(jsonDecode(requests.single.body), {'current_password': 'old-password', 'new_password': 'new-password'});
+      // この端末はログインしたまま
+      expect(storage.stored, isNotNull);
+    });
+
+    test('現在のパスワードが違えば(400)AuthExceptionを投げる', () async {
+      final service = createService((_) async => http.Response('', 500));
+      await signIn(service);
+      final client = clientReturning(service, _error(400, 'invalid_current_password'));
+
+      await expectLater(
+        service.changePassword(client, currentPassword: 'wrong', newPassword: 'new-password'),
+        throwsA(isA<AuthException>().having((e) => e.code, 'code', 'invalid_current_password')),
+      );
+      // 401ではないので、ログイン状態は無効にならない
+      expect(storage.stored, isNotNull);
+    });
+
+    test('表示名の変更に成功したら、端末のユーザーにも書く', () async {
+      final service = createService((_) async => http.Response('', 500));
+      await signIn(service);
+      final client = clientReturning(service, _json(200, {..._user(), 'display_name': 'たろう'}));
+
+      await service.updateDisplayName(client, 'たろう');
+
+      expect(requests.single.method, 'PATCH');
+      expect(jsonDecode(requests.single.body), {'display_name': 'たろう'});
+      expect((await db.getUser(_userId))!.displayName, 'たろう');
+    });
+  });
+
   group('AuthorizedClient', () {
     test('Bearerを付け、401(token_expired)ならトークンを更新して1回だけやり直す', () async {
       final service = createService((_) async => _json(200, _tokens('2')));

@@ -222,6 +222,58 @@ class AuthService {
     );
   }
 
+  /// パスワードを変える。現在のパスワードが違えば`invalid_current_password`のAuthExceptionを投げる。
+  /// サーバーはこの端末以外のログイン状態を無効にする(この端末はログインしたまま)
+  Future<void> changePassword(
+    http.Client authorizedClient, {
+    required String currentPassword,
+    required String newPassword,
+  }) async {
+    final http.Response response;
+    try {
+      response = await authorizedClient
+        .put(
+          Uri.parse('$_baseUrl/users/me/password'),
+          headers: _jsonHeaders,
+          body: jsonEncode({'current_password': currentPassword, 'new_password': newPassword}),
+        )
+        .timeout(_timeoutDuration);
+    } catch (_) {
+      throw const AuthException(AuthException.network);
+    }
+    if (response.statusCode != 204) {
+      throw AuthException(_errorCode(response) ?? 'unknown', statusCode: response.statusCode);
+    }
+  }
+
+  /// 表示名を変える。成功したら端末のユーザーにも書く
+  Future<void> updateDisplayName(http.Client authorizedClient, String displayName) async {
+    final current = _current;
+    if (current == null) return;
+    final http.Response response;
+    try {
+      response = await authorizedClient
+        .patch(
+          Uri.parse('$_baseUrl/users/me'),
+          headers: _jsonHeaders,
+          body: jsonEncode({'display_name': displayName}),
+        )
+        .timeout(_timeoutDuration);
+    } catch (_) {
+      throw const AuthException(AuthException.network);
+    }
+    if (response.statusCode != 200) {
+      throw AuthException(_errorCode(response) ?? 'unknown', statusCode: response.statusCode);
+    }
+    final user = json.decode(response.body) as Map<String, dynamic>;
+    await _db.upsertUser(
+      id: current.userId,
+      email: user['email'] as String,
+      displayName: user['display_name'] as String,
+      emailVerified: user['email_verified'] as bool,
+    );
+  }
+
   /// ログアウトする。サーバーでその端末のログイン状態を無効にし(失敗しても続ける)、端末のトークンを消す。
   /// ローカルのデータはそのユーザーのものとして残す
   Future<void> logout() async {

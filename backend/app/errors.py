@@ -20,6 +20,8 @@ class ErrorCode(StrEnum):
     ACCOUNT_DISABLED = "account_disabled"  # 403: アカウントが停止されている(パスワードが合っていた場合のみ)
     EMAIL_NOT_VERIFIED = "email_not_verified"  # 403: メールアドレスが未確認なので同期APIを使えない
     EMAIL_ALREADY_REGISTERED = "email_already_registered"  # 409: サインアップのメールアドレスが登録済み
+    # 400: パスワードの変更で、現在のパスワードが違う(401にすると、クライアントがログイン状態の無効と区別できない)
+    INVALID_CURRENT_PASSWORD = "invalid_current_password"
 
     # メールアドレスの確認コード
     EMAIL_ALREADY_VERIFIED = "email_already_verified"  # 409: 確認済みなので確認コードを送らない

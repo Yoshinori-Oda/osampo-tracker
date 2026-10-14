@@ -16,6 +16,21 @@ String signupErrorMessage(AuthException e) => switch (e.code) {
   _ => '登録できませんでした(${e.code})',
 };
 
+String changePasswordErrorMessage(AuthException e) => switch (e.code) {
+  'invalid_current_password' => '現在のパスワードが違います',
+  'validation_error' => '新しいパスワードは8〜128文字にしてください',
+  'unauthenticated' || 'token_expired' => 'ログインの有効期限が切れています。ログインし直してください',
+  AuthException.network => 'サーバーに接続できませんでした。通信環境を確認してください',
+  _ => 'パスワードを変更できませんでした(${e.code})',
+};
+
+String displayNameErrorMessage(AuthException e) => switch (e.code) {
+  'validation_error' => '表示名は1〜50文字にしてください',
+  'unauthenticated' || 'token_expired' => 'ログインの有効期限が切れています。ログインし直してください',
+  AuthException.network => 'サーバーに接続できなかったため、変更できませんでした',
+  _ => '表示名を変更できませんでした(${e.code})',
+};
+
 String verificationErrorMessage(AuthException e) => switch (e.code) {
   'invalid_verification_code' => 'コードが違います',
   'verification_code_expired' => '有効期限が切れたか、入力の回数の上限に達しました。コードを再発行してください',

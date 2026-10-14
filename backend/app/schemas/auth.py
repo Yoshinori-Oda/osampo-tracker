@@ -74,6 +74,19 @@ class UpdateMeRequest(BaseModel):
     display_name: DisplayName = Field(description="表示名(1〜50文字)")
 
 
+class ChangePasswordRequest(BaseModel):
+    model_config = ConfigDict(
+        extra="forbid",
+        json_schema_extra={
+            "examples": [{"current_password": "correct-horse", "new_password": "battery-staple"}]
+        },
+    )
+
+    # 形式のチェックはしない(登録済みのパスワードと一致するかだけを見る。ログインと同じ)
+    current_password: str = Field(max_length=128, description="現在のパスワード")
+    new_password: Password = Field(description="新しいパスワード(8〜128文字。サインアップと同じ条件)")
+
+
 # 確認コードは6桁の数字(先頭の0を含む文字列)。形式が違うものは照合せず422にする(入力の失敗の回数にも数えない)
 VerificationCode = Annotated[str, StringConstraints(pattern=r"^[0-9]{6}$")]
 

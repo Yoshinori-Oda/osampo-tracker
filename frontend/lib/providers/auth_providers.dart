@@ -101,6 +101,18 @@ class AuthController extends AsyncNotifier<AuthState> {
     state = AsyncData(_current.copyWith(emailVerified: true));
   }
 
+  // パスワードを変える(この端末はログインしたまま)。エラーはAuthExceptionとして投げる
+  Future<void> changePassword({required String currentPassword, required String newPassword}) =>
+    _service.changePassword(
+      ref.read(authorizedClientProvider),
+      currentPassword: currentPassword,
+      newPassword: newPassword,
+    );
+
+  // 表示名を変える。端末のユーザーが更新されるので、currentUserProviderを見ている画面にも反映される
+  Future<void> updateDisplayName(String displayName) =>
+    _service.updateDisplayName(ref.read(authorizedClientProvider), displayName);
+
   Future<void> logout() async {
     await _service.logout();
     state = const AsyncData(AuthState());

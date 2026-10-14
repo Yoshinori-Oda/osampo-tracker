@@ -9,6 +9,7 @@ from fastapi import APIRouter, Depends, Response, status
 from app.dependencies import CurrentAuth, DbSession, require_json_content_type
 from app.errors import ErrorCode
 from app.schemas.auth import (
+    ChangePasswordRequest,
     ConfirmEmailRequest,
     EmailVerificationSentResponse,
     UpdateMeRequest,
@@ -49,6 +50,33 @@ async def get_me(auth: CurrentAuth) -> UserResponse:
 async def update_me(body: UpdateMeRequest, auth: CurrentAuth, db: DbSession) -> UserResponse:
     """表示名を変更する(メールアドレス・パスワードの変更は別のendpoint)。"""
     return await auth_service.update_me(db, auth.user, body)
+
+
+@router.put(
+    "/password",
+    summary="パスワードの変更",
+    status_code=status.HTTP_204_NO_CONTENT,
+    dependencies=[Depends(require_json_content_type)],
+    responses=error_responses(
+        {
+            400: [ErrorCode.INVALID_CURRENT_PASSWORD],
+            **_AUTH,
+            413: [ErrorCode.PAYLOAD_TOO_LARGE],
+            415: [ErrorCode.UNSUPPORTED_MEDIA_TYPE],
+            422: [ErrorCode.VALIDATION_ERROR],
+        }
+    ),
+)
+async def change_password(body: ChangePasswordRequest, auth: CurrentAuth, db: DbSession) -> Response:
+    """現在のパスワードを確かめてから、新しいパスワードに変える。
+
+    - 現在のパスワードが違えば400(`invalid_current_password`)。401にしないのは、クライアントが401を
+      「ログイン状態が無効になった(再ログインが必要)」として扱うため
+    - この端末以外のログイン状態は全て無効になる(この端末はログインしたまま)
+    - 変更を知らせるメールを本人に送る
+    """
+    await auth_service.change_password(db, auth, body)
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
 @router.delete(

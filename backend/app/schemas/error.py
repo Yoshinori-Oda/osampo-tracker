@@ -51,6 +51,7 @@ ERROR_CODE_DESCRIPTIONS: dict[ErrorCode, str] = {
     ErrorCode.ACCOUNT_DISABLED: "アカウントが停止されている",
     ErrorCode.EMAIL_NOT_VERIFIED: "メールアドレスが未確認なので同期できない",
     ErrorCode.EMAIL_ALREADY_REGISTERED: "メールアドレスが登録済み",
+    ErrorCode.INVALID_CURRENT_PASSWORD: "現在のパスワードが違う",
     ErrorCode.EMAIL_ALREADY_VERIFIED: "メールアドレスは確認済み(確認コードを送らない)",
     ErrorCode.INVALID_VERIFICATION_CODE: "確認コードが違う(入力し直す)",
     ErrorCode.VERIFICATION_CODE_EXPIRED: "有効な確認コードが無い(期限切れ・失敗の上限に達した・未送信。再送する)",
