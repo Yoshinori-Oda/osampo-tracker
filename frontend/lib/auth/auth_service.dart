@@ -9,8 +9,10 @@ import 'auth_storage.dart';
 class AuthException implements Exception {
   final String code;
   final int? statusCode;
+  // 429(too_many_requests)のとき、再び試せるまでの秒数(Retry-Afterヘッダー)
+  final int? retryAfterSeconds;
 
-  const AuthException(this.code, {this.statusCode});
+  const AuthException(this.code, {this.statusCode, this.retryAfterSeconds});
 
   // 通信できなかった(圏外・タイムアウト・サーバーに届かない)
   static const network = 'network';
@@ -166,6 +168,58 @@ class AuthService {
     } catch (_) {
       return false;
     }
+  }
+
+  /// メールアドレスの確認コードを(再)発行する(サーバーがメールを送る)。次に再発行できるまでの秒数を返す。
+  /// 確認済みなら`email_already_verified`、間隔・回数の上限なら`too_many_requests`(retryAfterSecondsに待つ秒数)の
+  /// AuthExceptionを投げる。仕様はbackend/docs/API設計ドラフト.mdの「メールアドレスの確認のendpoints」
+  Future<int> sendVerificationCode(http.Client authorizedClient) async {
+    final http.Response response;
+    try {
+      response = await authorizedClient
+        .post(Uri.parse('$_baseUrl/users/me/email-verification'), headers: {'Accept': 'application/json'})
+        .timeout(_timeoutDuration);
+    } catch (_) {
+      throw const AuthException(AuthException.network);
+    }
+    if (response.statusCode != 202) {
+      throw AuthException(
+        _errorCode(response) ?? 'unknown',
+        statusCode: response.statusCode,
+        retryAfterSeconds: int.tryParse(response.headers['retry-after'] ?? ''),
+      );
+    }
+    final body = json.decode(response.body) as Map<String, dynamic>;
+    return body['resend_available_in'] as int;
+  }
+
+  /// 確認コードを送って照合する。合っていれば、レスポンスのユーザー情報(確認済み)を端末のDBに書く。
+  /// 違う・期限切れ等はAuthException(`invalid_verification_code`・`verification_code_expired`等)を投げる
+  Future<void> confirmVerificationCode(http.Client authorizedClient, String code) async {
+    final current = _current;
+    if (current == null) return;
+    final http.Response response;
+    try {
+      response = await authorizedClient
+        .post(
+          Uri.parse('$_baseUrl/users/me/email-verification/confirm'),
+          headers: _jsonHeaders,
+          body: jsonEncode({'code': code}),
+        )
+        .timeout(_timeoutDuration);
+    } catch (_) {
+      throw const AuthException(AuthException.network);
+    }
+    if (response.statusCode != 200) {
+      throw AuthException(_errorCode(response) ?? 'unknown', statusCode: response.statusCode);
+    }
+    final user = json.decode(response.body) as Map<String, dynamic>;
+    await _db.upsertUser(
+      id: current.userId,
+      email: user['email'] as String,
+      displayName: user['display_name'] as String,
+      emailVerified: user['email_verified'] as bool,
+    );
   }
 
   /// ログアウトする。サーバーでその端末のログイン状態を無効にし(失敗しても続ける)、端末のトークンを消す。

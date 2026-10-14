@@ -215,6 +215,97 @@ void main() {
     });
   });
 
+  group('メールアドレスの確認コード', () {
+    // AuthorizedClient経由で、決まったレスポンスを返す(Bearerが付くことも確かめる)
+    Future<AuthService> signedInService() async {
+      final service = createService((_) async => http.Response('', 500));
+      await db.upsertUser(id: _userId, email: 'test@example.com', displayName: 'テスト', emailVerified: false);
+      storage.stored = const StoredAuth(userId: _userId, accessToken: 'access-0', refreshToken: 'refresh-0');
+      await service.restore();
+      return service;
+    }
+
+    AuthorizedClient clientReturning(AuthService service, http.Response response) =>
+      AuthorizedClient(service, inner: MockClient((request) async {
+        requests.add(request);
+        return response;
+      }));
+
+    test('再発行は202なら次に再発行できるまでの秒数を返す', () async {
+      final service = await signedInService();
+      final client = clientReturning(service, _json(202, {'expires_in': 600, 'resend_available_in': 60}));
+
+      expect(await service.sendVerificationCode(client), 60);
+      expect(requests.single.method, 'POST');
+      expect(requests.single.url.path, '/api/users/me/email-verification');
+      expect(requests.single.headers['Authorization'], 'Bearer access-0');
+    });
+
+    test('再発行の429はRetry-Afterの秒数をAuthExceptionに入れる', () async {
+      final service = await signedInService();
+      final client = clientReturning(service, http.Response(
+        jsonEncode({'code': 'too_many_requests', 'message': '...'}),
+        429,
+        headers: {'content-type': 'application/json', 'retry-after': '42'},
+      ));
+
+      await expectLater(
+        service.sendVerificationCode(client),
+        throwsA(isA<AuthException>()
+          .having((e) => e.code, 'code', 'too_many_requests')
+          .having((e) => e.retryAfterSeconds, 'retryAfterSeconds', 42)),
+      );
+    });
+
+    test('再発行の409は確認済みとしてAuthExceptionを投げる', () async {
+      final service = await signedInService();
+      final client = clientReturning(service, _error(409, 'email_already_verified'));
+
+      await expectLater(
+        service.sendVerificationCode(client),
+        throwsA(isA<AuthException>().having((e) => e.code, 'code', 'email_already_verified')),
+      );
+    });
+
+    test('確認に成功したら、端末のユーザーを確認済みにする', () async {
+      final service = await signedInService();
+      final client = clientReturning(service, _json(200, _user(emailVerified: true)));
+
+      await service.confirmVerificationCode(client, '012345');
+
+      expect(requests.single.url.path, '/api/users/me/email-verification/confirm');
+      expect(jsonDecode(requests.single.body), {'code': '012345'});
+      expect((await db.getUser(_userId))!.emailVerified, isTrue);
+    });
+
+    for (final (status, code) in [
+      (400, 'invalid_verification_code'),
+      (400, 'verification_code_expired'),
+      (422, 'validation_error'),
+    ]) {
+      test('確認の$status($code)はAuthExceptionを投げ、端末のユーザーは未確認のまま', () async {
+        final service = await signedInService();
+        final client = clientReturning(service, _error(status, code));
+
+        await expectLater(
+          service.confirmVerificationCode(client, '999999'),
+          throwsA(isA<AuthException>().having((e) => e.code, 'code', code)),
+        );
+        expect((await db.getUser(_userId))!.emailVerified, isFalse);
+      });
+    }
+
+    test('通信できなければnetworkのAuthExceptionを投げる', () async {
+      final service = await signedInService();
+      final client = AuthorizedClient(service, inner: MockClient((_) async => throw http.ClientException('offline')));
+
+      await expectLater(
+        service.sendVerificationCode(client),
+        throwsA(isA<AuthException>().having((e) => e.code, 'code', AuthException.network)),
+      );
+    });
+  });
+
   group('AuthorizedClient', () {
     test('Bearerを付け、401(token_expired)ならトークンを更新して1回だけやり直す', () async {
       final service = createService((_) async => _json(200, _tokens('2')));

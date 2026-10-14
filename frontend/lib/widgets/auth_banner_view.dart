@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../providers/auth_providers.dart';
+import '../views/auth/email_verification_page.dart';
 import '../views/auth/login_page.dart';
 
 // 同期が止まっている理由(再ログインが必要・メールアドレスが未確認)を、全タブ共通で上部に表示するバナー。
@@ -20,17 +21,17 @@ class AuthBannerView extends ConsumerWidget {
     final needsRelogin = auth!.needsRelogin;
     final message = needsRelogin
       ? 'ログインの有効期限が切れたため同期を止めています。タップしてログインし直してください'
-      : 'メールアドレスが未確認のため、記録はサーバーと同期されません';
+      : 'メールアドレスが未確認のため、記録はサーバーと同期されません。タップして確認コードを入力してください';
 
     return Material(
       color: needsRelogin ? Colors.orange.shade800 : Colors.blueGrey,
       child: InkWell(
-        // メールアドレスの確認(コードの入力)はブロック3で追加する。今は再ログインのみタップで開く
-        onTap: needsRelogin
-          ? () => Navigator.of(context).push(
-              MaterialPageRoute(builder: (_) => const LoginPage(isRelogin: true)),
-            )
-          : null,
+        // 再ログインが必要ならログイン画面、メールアドレスが未確認なら確認コードの入力画面を開く
+        onTap: () => Navigator.of(context).push(
+          MaterialPageRoute(
+            builder: (_) => needsRelogin ? const LoginPage(isRelogin: true) : const EmailVerificationPage(),
+          ),
+        ),
         child: Padding(
           padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
           child: Row(

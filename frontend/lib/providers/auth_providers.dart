@@ -92,6 +92,15 @@ class AuthController extends AsyncNotifier<AuthState> {
     state = AsyncData(_current.copyWith(emailVerified: user?.emailVerified ?? false));
   }
 
+  // メールアドレスの確認コードを(再)発行する。次に再発行できるまでの秒数を返す。エラーはAuthExceptionとして投げる
+  Future<int> sendVerificationCode() => _service.sendVerificationCode(ref.read(authorizedClientProvider));
+
+  // 確認コードを照合し、合っていれば確認済みにする。canSyncがtrueになるので、MainPageが止まっていた同期を再開する
+  Future<void> confirmEmail(String code) async {
+    await _service.confirmVerificationCode(ref.read(authorizedClientProvider), code);
+    state = AsyncData(_current.copyWith(emailVerified: true));
+  }
+
   Future<void> logout() async {
     await _service.logout();
     state = const AsyncData(AuthState());

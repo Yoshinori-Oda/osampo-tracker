@@ -2,7 +2,9 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../auth/auth_service.dart';
 import '../../providers/auth_providers.dart';
+import '../../utils/delete_conflict_dialog.dart';
 import 'auth_error_messages.dart';
+import 'email_verification_page.dart';
 
 // 新規登録画面。登録するとそのままログインした状態になる。メールアドレスが未確認の間は、記録・閲覧はできるが同期はできない
 class SignupPage extends ConsumerStatefulWidget {
@@ -47,6 +49,11 @@ class _SignupPageState extends ConsumerState<SignupPage> {
       );
       if (!mounted) return;
       Navigator.of(context).popUntil((route) => route.isFirst);
+      // メイン画面(AuthGateが切り替える)の上に、確認コードの入力画面を開く。コードはサインアップ時にサーバーが送り済み。
+      // この画面は閉じたので、アプリ全体のNavigatorで開く
+      navigatorKey.currentState?.push(
+        MaterialPageRoute(builder: (_) => const EmailVerificationPage(afterSignup: true)),
+      );
     } on AuthException catch (e) {
       setState(() => _errorMessage = signupErrorMessage(e));
     } catch (e) {

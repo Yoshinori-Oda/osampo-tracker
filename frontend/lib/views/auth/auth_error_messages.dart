@@ -15,3 +15,15 @@ String signupErrorMessage(AuthException e) => switch (e.code) {
   AuthException.network => 'サーバーに接続できませんでした。通信環境を確認してください',
   _ => '登録できませんでした(${e.code})',
 };
+
+String verificationErrorMessage(AuthException e) => switch (e.code) {
+  'invalid_verification_code' => 'コードが違います',
+  'verification_code_expired' => '有効期限が切れたか、入力の回数の上限に達しました。コードを再発行してください',
+  'too_many_requests' => '再発行には時間をあけてください',
+  'unauthenticated' || 'token_expired' => 'ログインの有効期限が切れています。ログインし直してください',
+  AuthException.network => '通信できませんでした',
+  _ => '確認できませんでした(${e.code})',
+};
+
+// 再発行の間隔・回数の上限(429)のときの表示。secondsは残りの待ち時間
+String resendWaitMessage(int seconds) => '再発行には時間をあけてください(あと$seconds秒)';

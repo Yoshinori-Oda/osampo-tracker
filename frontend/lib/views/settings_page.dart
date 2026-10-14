@@ -4,9 +4,10 @@ import '../auth/auth_service.dart';
 import '../models/recording_phase.dart';
 import '../providers/auth_providers.dart';
 import '../providers/tracking_providers.dart';
+import 'auth/email_verification_page.dart';
 
 // 設定タブ。今はアカウント(表示・ログアウト・アカウントの削除)のみ。
-// メールアドレスの確認・パスワードの変更はブロック3で追加する
+// パスワードの変更はブロック3で追加する(メールアドレスの確認は、確認状態の行のタップで確認コードの入力画面を開く)
 class SettingsPage extends ConsumerStatefulWidget {
   const SettingsPage({super.key});
 
@@ -115,7 +116,13 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
           ListTile(
             leading: Icon(auth?.emailVerified == true ? Icons.verified : Icons.mark_email_unread),
             title: Text(auth?.emailVerified == true ? 'メールアドレスは確認済みです' : 'メールアドレスが未確認です'),
-            subtitle: auth?.emailVerified == true ? null : const Text('確認が済むまで、記録はサーバーと同期されません'),
+            subtitle: auth?.emailVerified == true ? null : const Text('タップして確認コードを入力してください。確認が済むまで、記録はサーバーと同期されません'),
+            // 未確認なら確認コードの入力画面を開く(収録中でも開ける。確認しても同期が始まるだけで収録の邪魔にならないため)
+            onTap: auth?.emailVerified == true
+              ? null
+              : () => Navigator.of(context, rootNavigator: true).push(
+                  MaterialPageRoute(builder: (_) => const EmailVerificationPage()),
+                ),
           ),
           const Divider(),
           ListTile(
