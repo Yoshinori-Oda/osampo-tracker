@@ -14,7 +14,7 @@ from email.message import EmailMessage
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.mail import PermanentMailError, build_message
+from app.mail import PermanentMailError, TemporaryMailError, build_message
 from app.models import OutboxEmail
 from app.models.outbox_email import OUTBOX_FAILED, OUTBOX_PENDING, OUTBOX_SENT
 from app.services.session_service import current_time
@@ -98,22 +98,19 @@ async def send_pending_emails(
         except PermanentMailError as exc:
             await _give_up(db, email, exc)
             failed += 1
-        except Exception as exc:
-            # 一時的な失敗。想定外の例外も再送の対象にし、ログで気づけるようにする
-            if email.attempts >= max_attempts:
-                await _give_up(db, email, exc)
-                failed += 1
-            else:
-                email.next_attempt_at = await current_time(db) + retry_delay(email.attempts)
-                logger.warning(
-                    "outbox email %s: temporary failure (attempt %d/%d), retry at %s: %s",
-                    email.id,
-                    email.attempts,
-                    max_attempts,
-                    email.next_attempt_at.isoformat(),
-                    exc,
-                )
+        except TemporaryMailError as exc:
+            if await _retry_or_give_up(db, email, exc, max_attempts):
                 retrying += 1
+            else:
+                failed += 1
+        except Exception as exc:
+            # 想定外の例外(バグ等)。スタックトレースを残し、一時的な失敗と同じく再送の対象にする
+            # (ここで止めると、同じ行を5秒ごとに取り出しては落ちる状態になるため)
+            logger.exception("outbox email %s: unexpected error while sending", email.id)
+            if await _retry_or_give_up(db, email, exc, max_attempts):
+                retrying += 1
+            else:
+                failed += 1
         else:
             email.status = OUTBOX_SENT
             email.completed_at = await current_time(db)
@@ -123,6 +120,25 @@ async def send_pending_emails(
             sent += 1
         await db.commit()
     return SendResult(sent=sent, retrying=retrying, failed=failed)
+
+
+async def _retry_or_give_up(
+    db: AsyncSession, email: OutboxEmail, exc: Exception, max_attempts: int
+) -> bool:
+    """一時的な失敗の後、試行回数の上限に達していなければ次の試行を予約してTrueを返す。達していれば諦めてFalseを返す。"""
+    if email.attempts >= max_attempts:
+        await _give_up(db, email, exc)
+        return False
+    email.next_attempt_at = await current_time(db) + retry_delay(email.attempts)
+    logger.warning(
+        "outbox email %s: temporary failure (attempt %d/%d), retry at %s: %s",
+        email.id,
+        email.attempts,
+        max_attempts,
+        email.next_attempt_at.isoformat(),
+        exc,
+    )
+    return True
 
 
 async def _give_up(db: AsyncSession, email: OutboxEmail, exc: Exception) -> None:
