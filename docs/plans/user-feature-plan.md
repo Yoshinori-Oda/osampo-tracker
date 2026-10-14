@@ -158,9 +158,9 @@ PostgREST継続+送信ワーカー(認証がPL/pgSQLに埋まり見通しが悪�
 
 - [x] メール送信基盤: outboxテーブル + `worker`での送信 + Mailpit(2026-10-14。ブランチ`feat/mail-outbox`、run_id `c5dd5ba8`でPASSED、Mailpitでの送信・再送を確認済み)
 - [x] メール確認コード(サインアップ自体はブロック2。6桁・10分・5回まで・再送は60秒あけて1日5回まで、argon2で保存)(backendは2026-10-14。ブランチ`feat/email-verification-code`、run_id `53c4a25b`でPASSED。画面は下の「フロント: サインアップ/確認コード入力の画面」)
-- [ ] パスワード変更(現在のパスワードで確認)
+- [x] パスワード変更(現在のパスワードで確認)(2026-10-14。ブランチ`feat/password-change`、backendはrun_id `d4877cba`、frontendは`75aadd16`でPASSED。この端末以外のログイン状態の無効化と変更の通知メールも。2台の端末での確認は未実施)
 - [x] フロント: サインアップ/確認コード入力の画面(再送を含む)(2026-10-14。ブランチ`feat/email-verification-screen`、run_id `735b882d`でPASSED、シミュレータでMailpitのコードによる確認まで確認済み)
-- [ ] 設定タブ: 全体の構成を設計し、アカウント欄(表示名の編集、パスワード変更、ログアウト)を実装する
+- [x] 設定タブ: 全体の構成を設計し、アカウント欄(表示名の編集、パスワード変更、ログアウト)を実装する(2026-10-14。ブランチ`feat/password-change`、frontendはrun_id `75aadd16`でPASSED。構成は`docs/design/screens.md`の`settings_page.dart`)
 
 ### 11月以降
 

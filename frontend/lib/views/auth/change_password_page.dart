@@ -68,10 +68,10 @@ class _ChangePasswordPageState extends ConsumerState<ChangePasswordPage> {
   String? _validateNewPassword(String? value) {
     final length = value?.length ?? 0;
     if (length < minPasswordLength) {
-      return 'パスワードは${minPasswordLength}文字以上にしてください';
+      return 'パスワードは$minPasswordLength文字以上にしてください';
     }
     if (length > maxPasswordLength) {
-      return 'パスワードは${maxPasswordLength}文字以内にしてください';
+      return 'パスワードは$maxPasswordLength文字以内にしてください';
     }
     return null;
   }
@@ -102,7 +102,7 @@ class _ChangePasswordPageState extends ConsumerState<ChangePasswordPage> {
                   controller: _newController,
                   decoration: InputDecoration(
                     labelText: '新しいパスワード',
-                    helperText: '${minPasswordLength}〜${maxPasswordLength}文字',
+                    helperText: '$minPasswordLength〜$maxPasswordLength文字',
                   ),
                   obscureText: !_showPasswords,
                   autofillHints: const [AutofillHints.newPassword],
