@@ -74,6 +74,27 @@ class UpdateMeRequest(BaseModel):
     display_name: DisplayName = Field(description="表示名(1〜50文字)")
 
 
+# 確認コードは6桁の数字(先頭の0を含む文字列)。形式が違うものは照合せず422にする(入力の失敗の回数にも数えない)
+VerificationCode = Annotated[str, StringConstraints(pattern=r"^[0-9]{6}$")]
+
+
+class ConfirmEmailRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid", json_schema_extra={"examples": [{"code": "012345"}]})
+
+    code: VerificationCode = Field(description="メールで届いた6桁の確認コード")
+
+
+class EmailVerificationSentResponse(BaseModel):
+    """確認コードの送信のレスポンス。メールは送信待ちに積んだだけで、workerが数秒以内に送る。"""
+
+    model_config = ConfigDict(json_schema_extra={"examples": [{"expires_in": 600, "resend_available_in": 60}]})
+
+    expires_in: int = Field(description="送ったコードの有効期限までの秒数")
+    resend_available_in: int = Field(
+        description="次に再送できるまでの秒数(画面の再送ボタンのカウントダウンに使う)"
+    )
+
+
 class UserResponse(BaseModel):
     id: uuid.UUID
     email: str

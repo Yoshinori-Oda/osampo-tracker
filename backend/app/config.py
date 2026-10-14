@@ -52,6 +52,12 @@ class Settings(BaseSettings):
     mail_max_attempts: int = 5
     outbox_retention_days: int = 90
 
+    # メールアドレスの確認コード(6桁): 有効期限、1つのコードで間違えてよい回数、再送の間隔、24時間あたりの送信回数の上限
+    email_code_ttl_minutes: int = 10
+    email_code_max_failed_attempts: int = 5
+    email_code_resend_interval_seconds: int = 60
+    email_code_daily_limit: int = 5
+
     @property
     def app_database_url(self) -> URL:
         return self._database_url(self.app_db_user, self.app_db_password, self.postgres_db)

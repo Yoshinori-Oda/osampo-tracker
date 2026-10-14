@@ -21,6 +21,12 @@ class ErrorCode(StrEnum):
     EMAIL_NOT_VERIFIED = "email_not_verified"  # 403: メールアドレスが未確認なので同期APIを使えない
     EMAIL_ALREADY_REGISTERED = "email_already_registered"  # 409: サインアップのメールアドレスが登録済み
 
+    # メールアドレスの確認コード
+    EMAIL_ALREADY_VERIFIED = "email_already_verified"  # 409: 確認済みなので確認コードを送らない
+    INVALID_VERIFICATION_CODE = "invalid_verification_code"  # 400: 確認コードが違う(入力し直せる)
+    VERIFICATION_CODE_EXPIRED = "verification_code_expired"  # 400: 有効な確認コードが無い(再送が必要)
+    TOO_MANY_REQUESTS = "too_many_requests"  # 429: 送信の間隔・回数の上限。Retry-Afterの秒数だけ待つ
+
     # リソース
     USER_NOT_FOUND = "user_not_found"  # 404: パスパラメーターのuser_idのユーザーが存在しない
     SESSION_NOT_FOUND = "session_not_found"  # 404: 当該ユーザーのsessionとして存在しない
@@ -49,9 +55,12 @@ class AppError(Exception):
         code: ErrorCode,
         message: str,
         details: list[dict[str, str]] | None = None,
+        headers: dict[str, str] | None = None,
     ) -> None:
         super().__init__(message)
         self.status_code = status_code
         self.code = code
         self.message = message
         self.details = details
+        # レスポンスに付けるヘッダー(429のRetry-After等)
+        self.headers = headers

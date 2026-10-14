@@ -9,7 +9,8 @@ from app.models.base import Base
 
 OUTBOX_PENDING = "pending"  # 送信待ち(失敗して再送を待っているものを含む)
 OUTBOX_SENT = "sent"  # 送信済み(SMTPサーバーが受け取った。相手に届いたことまでは分からない)
-OUTBOX_FAILED = "failed"  # 諦めた(恒久的な失敗、または試行回数の上限)
+OUTBOX_FAILED = "failed"  # 諦めた(恒久的な失敗、試行回数の上限、または送信期限切れ)
+OUTBOX_CANCELLED = "cancelled"  # 送る必要が無くなった(確認コードの再送で古いコードのメールを取り消した等)
 
 
 class OutboxEmail(Base):
@@ -23,7 +24,8 @@ class OutboxEmail(Base):
     __tablename__ = "outbox_emails"
     __table_args__ = (
         CheckConstraint(
-            "status IN ('pending', 'sent', 'failed')", name="outbox_emails_status_check"
+            "status IN ('pending', 'sent', 'failed', 'cancelled')",
+            name="outbox_emails_status_check",
         ),
         # workerが送信待ちの行を探す用
         Index(
@@ -56,8 +58,10 @@ class OutboxEmail(Base):
     next_attempt_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=text("CURRENT_TIMESTAMP")
     )
-    # 送信済みになった日時、または諦めた日時。pendingならnull
+    # 送信済みになった日時、または諦めた・取り消した日時。pendingならnull
     completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    # この日時を過ぎたら送らない(確認コードのメールではコードの有効期限)。nullなら期限なし
+    send_deadline: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=text("CURRENT_TIMESTAMP")
     )

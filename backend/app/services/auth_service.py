@@ -22,6 +22,7 @@ from app.schemas.auth import (
     UpdateMeRequest,
     UserResponse,
 )
+from app.services.email_verification_service import issue_verification_code
 from app.services.session_service import current_time
 
 
@@ -72,6 +73,8 @@ async def signup(db: AsyncSession, body: SignupRequest) -> TokenResponse:
         # 同じメールアドレスのサインアップが同時に届いた場合
         raise _email_already_registered() from exc
 
+    # メールアドレスの確認コードを、ユーザーの作成と同じトランザクションで送る(outboxに積む)
+    await issue_verification_code(db, user)
     tokens = await _start_auth_session(db, user, body.device_id, body.device_name)
     await db.commit()
     return tokens

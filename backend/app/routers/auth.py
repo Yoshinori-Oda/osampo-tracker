@@ -29,6 +29,7 @@ async def signup(body: SignupRequest, db: DbSession) -> TokenResponse:
     """アカウントを作り、そのままログインした状態のトークンを返す。
 
     作成直後はメールアドレスが未確認(`email_verified`がfalse)なので、ログインはできるが同期APIは403(`email_not_verified`)。
+    確認コードのメールを自動で送る(`POST /api/users/me/email-verification/confirm`で確認する)。
     """
     return await auth_service.signup(db, body)
 

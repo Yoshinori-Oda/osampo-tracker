@@ -5,6 +5,7 @@ Alembicがmetadataから全てのテーブルを参照できるよう、モデ�
 
 from app.models.auth_session import AuthSession
 from app.models.base import Base
+from app.models.email_code import EmailCode
 from app.models.outbox_email import OutboxEmail
 from app.models.refresh_token import RefreshToken
 from app.models.track_point import TrackPoint
@@ -14,6 +15,7 @@ from app.models.user import User
 __all__ = [
     "AuthSession",
     "Base",
+    "EmailCode",
     "OutboxEmail",
     "RefreshToken",
     "TrackPoint",

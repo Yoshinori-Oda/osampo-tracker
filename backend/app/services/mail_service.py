@@ -8,15 +8,20 @@ import logging
 import uuid
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
-from datetime import timedelta
+from datetime import datetime, timedelta
 from email.message import EmailMessage
 
-from sqlalchemy import func, select
+from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.mail import PermanentMailError, TemporaryMailError, build_message
 from app.models import OutboxEmail
-from app.models.outbox_email import OUTBOX_FAILED, OUTBOX_PENDING, OUTBOX_SENT
+from app.models.outbox_email import (
+    OUTBOX_CANCELLED,
+    OUTBOX_FAILED,
+    OUTBOX_PENDING,
+    OUTBOX_SENT,
+)
 from app.services.session_service import current_time
 
 logger = logging.getLogger(__name__)
@@ -35,8 +40,12 @@ async def enqueue_email(
     subject: str,
     body: str,
     recipient_user_id: uuid.UUID | None = None,
+    send_deadline: datetime | None = None,
 ) -> OutboxEmail:
-    """送るメールをoutboxに積む。commitは呼び出し元が業務のデータと一緒に行う(同じトランザクションで確定させるため)。"""
+    """送るメールをoutboxに積む。commitは呼び出し元が業務のデータと一緒に行う(同じトランザクションで確定させるため)。
+
+    send_deadlineを渡すと、その日時を過ぎても送れていなければ送らずに諦める(確認コードの有効期限など)。
+    """
     now = await current_time(db)
     # server_defaultに任せると、flush後に値を読むときに暗黙のSELECTが起きる(非同期ではエラー)ので、値を明示する
     email = OutboxEmail(
@@ -47,11 +56,27 @@ async def enqueue_email(
         status=OUTBOX_PENDING,
         attempts=0,
         next_attempt_at=now,
+        send_deadline=send_deadline,
         created_at=now,
     )
     db.add(email)
     await db.flush()
     return email
+
+
+async def cancel_pending_email(db: AsyncSession, email_id: uuid.UUID) -> bool:
+    """まだ送っていないメールを取り消す(commitは呼び出し元)。取り消したらTrue、送信済み等で取り消せなければFalseを返す。
+
+    workerが送信中の行はロックされているので、送信の結果がcommitされるまで待ち、送信済みなら何もしない。
+    """
+    # 時刻はSQLの関数ではなく値で渡す(関数だと、手元のオブジェクトの属性が期限切れになり、読むときに暗黙のSELECTが起きるため)
+    now = await current_time(db)
+    result = await db.execute(
+        update(OutboxEmail)
+        .where(OutboxEmail.id == email_id, OutboxEmail.status == OUTBOX_PENDING)
+        .values(status=OUTBOX_CANCELLED, completed_at=now)
+    )
+    return result.rowcount > 0
 
 
 def retry_delay(attempts: int) -> timedelta:
@@ -91,6 +116,16 @@ async def send_pending_emails(
         )
         if email is None:
             break
+
+        now = await current_time(db)
+        if email.send_deadline is not None and email.send_deadline <= now:
+            # 送信が遅れて期限を過ぎた(確認コードなら、届いても使えない)。送らずに諦める
+            email.status = OUTBOX_FAILED
+            email.completed_at = now
+            logger.error("outbox email %s: gave up because the send deadline has passed", email.id)
+            failed += 1
+            await db.commit()
+            continue
 
         email.attempts += 1
         try:

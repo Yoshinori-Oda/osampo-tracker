@@ -14,8 +14,13 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app import mail
 from app.mail import PermanentMailError, TemporaryMailError, classify_smtp_error
 from app.models import OutboxEmail, User
-from app.models.outbox_email import OUTBOX_FAILED, OUTBOX_PENDING, OUTBOX_SENT
-from app.services.mail_service import enqueue_email, retry_delay, send_pending_emails
+from app.models.outbox_email import OUTBOX_CANCELLED, OUTBOX_FAILED, OUTBOX_PENDING, OUTBOX_SENT
+from app.services.mail_service import (
+    cancel_pending_email,
+    enqueue_email,
+    retry_delay,
+    send_pending_emails,
+)
 from app.services.session_service import current_time
 
 MAX_ATTEMPTS = 5
@@ -106,6 +111,38 @@ async def test_does_not_send_emails_not_due_or_completed(db_session: AsyncSessio
 
     assert result.processed == 0
     assert sender.messages == []
+
+
+async def test_does_not_send_email_past_send_deadline(db_session: AsyncSession):
+    email = await enqueue(db_session)
+    email.send_deadline = await current_time(db_session) - timedelta(seconds=1)
+    await db_session.flush()
+    sender = FakeSender()
+
+    result = await send(db_session, sender)
+
+    # 期限を過ぎたメール(確認コードなら届いても使えない)は送らずに諦める
+    assert result.failed == 1
+    assert sender.messages == []
+    assert email.status == OUTBOX_FAILED
+    assert email.attempts == 0
+
+
+async def test_cancel_pending_email(db_session: AsyncSession):
+    pending = await enqueue(db_session)
+    sent = await enqueue(db_session)
+    sent.status = OUTBOX_SENT
+    await db_session.flush()
+
+    assert await cancel_pending_email(db_session, pending.id) is True
+    # 送信済みは取り消せない
+    assert await cancel_pending_email(db_session, sent.id) is False
+
+    assert pending.status == OUTBOX_CANCELLED
+    assert pending.completed_at is not None
+    assert sent.status == OUTBOX_SENT
+    # 取り消した行は送らない
+    assert (await send(db_session, FakeSender())).processed == 0
 
 
 # ---- 失敗の扱い ------------------------------------------------------------------------

@@ -40,6 +40,23 @@ def verify_password(password: str, hashed: str | None) -> bool:
     return _password_hash.verify(password, hashed)
 
 
+# ---- メールアドレスの確認コード ------------------------------------------------------
+
+
+def new_verification_code() -> str:
+    """6桁の数字の確認コード(先頭の0を含む)。推測されないよう、暗号論的な乱数(secrets)で作る。"""
+    return f"{secrets.randbelow(10**6):06d}"
+
+
+def hash_verification_code(code: str) -> str:
+    """確認コードをパスワードと同じargon2でハッシュにする。6桁は総当たりできるので、守りの本体は有効期限と失敗の上限。"""
+    return _password_hash.hash(code)
+
+
+def verify_verification_code(code: str, hashed: str) -> bool:
+    return _password_hash.verify(code, hashed)
+
+
 # ---- アクセストークン(JWT) --------------------------------------------------------
 
 JWT_ALGORITHM = "ES256"
