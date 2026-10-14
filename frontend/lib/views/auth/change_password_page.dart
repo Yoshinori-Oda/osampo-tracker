@@ -1,9 +1,9 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import '../../auth/auth_limits.dart';
 import '../../auth/auth_service.dart';
 import '../../providers/auth_providers.dart';
 import 'auth_error_messages.dart';
-import 'signup_page.dart';
 
 // パスワードの変更画面(設定タブから開く)。仕様はdocs/design/screens.mdの「auth/change_password_page.dart」、
 // APIはbackend/docs/API設計ドラフト.mdの「PUT /users/me/password」
@@ -67,11 +67,11 @@ class _ChangePasswordPageState extends ConsumerState<ChangePasswordPage> {
 
   String? _validateNewPassword(String? value) {
     final length = value?.length ?? 0;
-    if (length < SignupPage.minPasswordLength) {
-      return 'パスワードは${SignupPage.minPasswordLength}文字以上にしてください';
+    if (length < minPasswordLength) {
+      return 'パスワードは${minPasswordLength}文字以上にしてください';
     }
-    if (length > SignupPage.maxPasswordLength) {
-      return 'パスワードは${SignupPage.maxPasswordLength}文字以内にしてください';
+    if (length > maxPasswordLength) {
+      return 'パスワードは${maxPasswordLength}文字以内にしてください';
     }
     return null;
   }
@@ -102,7 +102,7 @@ class _ChangePasswordPageState extends ConsumerState<ChangePasswordPage> {
                   controller: _newController,
                   decoration: InputDecoration(
                     labelText: '新しいパスワード',
-                    helperText: '${SignupPage.minPasswordLength}〜${SignupPage.maxPasswordLength}文字',
+                    helperText: '${minPasswordLength}〜${maxPasswordLength}文字',
                   ),
                   obscureText: !_showPasswords,
                   autofillHints: const [AutofillHints.newPassword],

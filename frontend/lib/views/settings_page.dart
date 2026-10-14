@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import '../auth/auth_limits.dart';
 import '../auth/auth_service.dart';
 import '../models/recording_phase.dart';
 import '../providers/auth_providers.dart';
@@ -7,7 +8,6 @@ import '../providers/tracking_providers.dart';
 import 'auth/auth_error_messages.dart';
 import 'auth/change_password_page.dart';
 import 'auth/email_verification_page.dart';
-import 'auth/signup_page.dart';
 
 // 設定タブ。今はアカウント(表示名の編集・メールアドレスの確認・パスワードの変更・ログアウト)と、一番下のアカウントの削除のみ。
 // 仕様はdocs/design/screens.mdの「settings_page.dart」
@@ -234,7 +234,7 @@ class _DisplayNameDialogState extends State<_DisplayNameDialog> {
           key: const Key('display_name_field'),
           controller: _controller,
           autofocus: true,
-          maxLength: SignupPage.maxDisplayNameLength,
+          maxLength: maxDisplayNameLength,
           decoration: const InputDecoration(labelText: '表示名'),
           validator: (value) => (value ?? '').trim().isEmpty ? '表示名を入力してください' : null,
           onFieldSubmitted: (_) => _submit(),

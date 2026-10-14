@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import '../../auth/auth_limits.dart';
 import '../../auth/auth_service.dart';
 import '../../providers/auth_providers.dart';
 import '../../utils/delete_conflict_dialog.dart';
@@ -15,11 +16,6 @@ class SignupPage extends ConsumerStatefulWidget {
 }
 
 class _SignupPageState extends ConsumerState<SignupPage> {
-  // サーバーの入力チェック(backend/app/schemas/auth.py)と揃える
-  static const int minPasswordLength = 8;
-  static const int maxPasswordLength = 128;
-  static const int maxDisplayNameLength = 50;
-
   final _formKey = GlobalKey<FormState>();
   final _emailController = TextEditingController();
   final _passwordController = TextEditingController();
