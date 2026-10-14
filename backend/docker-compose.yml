@@ -69,14 +69,27 @@ services:
       APP_DB_PASSWORD: ${APP_DB_PASSWORD}
       PURGE_RETENTION_DAYS: ${PURGE_RETENTION_DAYS:-90}
       PURGE_INTERVAL_HOURS: ${PURGE_INTERVAL_HOURS:-24}
+      # メール送信(apiはoutboxに積むだけなので、SMTPの設定はworkerにだけ渡す)。既定はmailpit。項目はbackend/docs/バックエンド構成.md
+      SMTP_HOST: ${SMTP_HOST:-mailpit}
+      SMTP_PORT: ${SMTP_PORT:-1025}
+      SMTP_USERNAME: ${SMTP_USERNAME:-}
+      SMTP_PASSWORD: ${SMTP_PASSWORD:-}
+      SMTP_STARTTLS: ${SMTP_STARTTLS:-false}
+      MAIL_FROM: "${MAIL_FROM:-osampo-tracker <no-reply@osampo-tracker.local>}"
+      MAIL_POLL_INTERVAL_SECONDS: ${MAIL_POLL_INTERVAL_SECONDS:-5}
+      MAIL_MAX_ATTEMPTS: ${MAIL_MAX_ATTEMPTS:-5}
+      OUTBOX_RETENTION_DAYS: ${OUTBOX_RETENTION_DAYS:-90}
     volumes:
       - ./app:/app/app
     depends_on:
       db:
         condition: service_healthy
+      mailpit:
+        condition: service_started
     restart: unless-stopped
 
-  # 開発用のSMTP受信サーバー。送信したメールはhttp://localhost:8025で確認できる(外部には送らない)
+  # 開発用のSMTP受信サーバー。送信したメールはhttp://localhost:8025で確認できる(外部には送らない)。
+  # SMTPはcomposeの中(mailpit:1025)からだけ使うので、ホストには公開しない
   mailpit:
     image: axllent/mailpit
     ports:

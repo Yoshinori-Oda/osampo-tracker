@@ -39,6 +39,19 @@ class Settings(BaseSettings):
     # リフレッシュトークンの有効期限。無効にした端末のログイン状態をパージするまでの期間にも使う
     refresh_token_ttl_days: int = 30
 
+    # メール送信。apiはoutboxに積むだけなので、SMTPの設定を使うのはworkerだけ。既定はcomposeの中のMailpit
+    smtp_host: str = "mailpit"
+    smtp_port: int = 1025
+    smtp_username: str | None = None
+    smtp_password: SecretStr | None = None
+    smtp_starttls: bool = False
+    smtp_timeout_seconds: int = 10
+    mail_from: str = "osampo-tracker <no-reply@osampo-tracker.local>"
+    # outboxを確認する間隔、1通あたりの試行回数の上限、送信済み・諦めた行を残す日数
+    mail_poll_interval_seconds: int = 5
+    mail_max_attempts: int = 5
+    outbox_retention_days: int = 90
+
     @property
     def app_database_url(self) -> URL:
         return self._database_url(self.app_db_user, self.app_db_password, self.postgres_db)

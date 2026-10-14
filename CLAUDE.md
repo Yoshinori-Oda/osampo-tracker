@@ -54,16 +54,17 @@ Claude Code がこのプロジェクトで作業する際のコンテキスト�
 
 - backend: Dockerで動かすバックエンド(FastAPIのapi + 定期実行のworker + PostgreSQL)
   - app/: FastAPIのアプリ本体(config.py: 設定、db.py: DB接続、main.py: アプリ、worker.py: 定期実行、
-    security.py: パスワードのハッシュ・トークン、cli.py: 管理用のコマンド(シード・アカウントの停止)、
+    security.py: パスワードのハッシュ・トークン、mail.py: SMTPでのメールの送信、cli.py: 管理用のコマンド(シード・アカウントの停止・テストメール)、
     routers/・schemas/・services/・models/: レイヤ。詳細は`backend/docs/バックエンド構成.md`)
   - tests/: pytest
   - pyproject.toml・uv.lock: 依存パッケージ(uv)。Dockerfile: api・worker共通のイメージ
   - alembic.ini・migrations/: Alembicのマイグレーション。0001は旧initdb.sqlのスキーマ(とPostgREST用のストアドファンクション)を
     そのまま写したもの、0002は高度関連の3列のdouble precision化、0003はPostgRESTの削除(ストアドファンクションの削除と
-    deleted_atの「削除した日時」への統一)
+    deleted_atの「削除した日時」への統一)、0004は認証、0005はメールのoutbox
   - db/init/: DBコンテナの初回起動時に実行するスクリプト(ロール・テスト用データベース・拡張機能・権限)
   - db/seed.sql: 開発用のダミーデータ(テストユーザー`1111...`とセッション)
-  - docker-compose.yml: db / api / worker / mailpit。DBの接続情報は`backend/.env`(コミットしない)
+  - docker-compose.yml: db / api / worker / mailpit。DBの接続情報は`backend/.env`(コミットしない)。
+    メールはapiがoutboxに積み、workerがmailpitへ送る(届いたメールは http://localhost:8025 で見る)
   - docs/: FastAPIへの置き換えに向けたAPI設計・バックエンド構成の詳細設計(下記「ドキュメント索引」)
 - docs: 設計・経緯・計画(下記「ドキュメント索引」)
 - frontend: Flutterによるモバイルアプリ本体(`flutter create`の出力から開発)
@@ -277,4 +278,6 @@ openssl ec -in secrets/jwt_private.pem -pubout -out secrets/jwt_public.pem
 # アカウントの停止・解除(管理者の画面ができるまでの手段)
 docker compose run --rm api python -m app.cli disable-user <email>
 docker compose run --rm api python -m app.cli enable-user <email>
+# テストメールをoutboxに積む(workerが数秒以内にmailpitへ送る。http://localhost:8025 で確認)
+docker compose run --rm api python -m app.cli send-test-mail test@example.com
 ```

@@ -7,8 +7,14 @@ from geoalchemy2 import WKTElement
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models import AuthSession, RefreshToken, TrackingSession, TrackPoint, User
-from app.services.purge_service import purge_expired_auth, purge_expired_tombstones
+from app.models import AuthSession, OutboxEmail, RefreshToken, TrackingSession, TrackPoint, User
+from app.models.outbox_email import OUTBOX_FAILED, OUTBOX_PENDING, OUTBOX_SENT
+from app.services.mail_service import enqueue_email
+from app.services.purge_service import (
+    purge_expired_auth,
+    purge_expired_tombstones,
+    purge_old_outbox_emails,
+)
 
 RETENTION_DAYS = 90
 
@@ -104,3 +110,27 @@ async def test_purges_expired_refresh_tokens_and_old_revoked_logins(
         select(func.count()).select_from(RefreshToken).where(RefreshToken.auth_session_id == active.id)
     )
     assert remaining_tokens == 1
+
+
+OUTBOX_RETENTION_DAYS = 90
+
+
+async def add_outbox_email(db: AsyncSession, subject: str, status: str, age_days: int) -> None:
+    email = await enqueue_email(db, to_address="taro@example.com", subject=subject, body="本文")
+    email.status = status
+    email.created_at = datetime.now(UTC) - timedelta(days=age_days)
+    await db.flush()
+
+
+async def test_purges_only_old_sent_or_failed_outbox_emails(db_session: AsyncSession):
+    await add_outbox_email(db_session, "古い送信済み", OUTBOX_SENT, OUTBOX_RETENTION_DAYS + 1)
+    await add_outbox_email(db_session, "古い諦めた", OUTBOX_FAILED, OUTBOX_RETENTION_DAYS + 1)
+    await add_outbox_email(db_session, "新しい送信済み", OUTBOX_SENT, OUTBOX_RETENTION_DAYS - 1)
+    # 送信待ちは古くても消さない
+    await add_outbox_email(db_session, "古い送信待ち", OUTBOX_PENDING, OUTBOX_RETENTION_DAYS + 1)
+
+    purged = await purge_old_outbox_emails(db_session, OUTBOX_RETENTION_DAYS)
+
+    assert purged == 2
+    remaining = set(await db_session.scalars(select(OutboxEmail.subject)))
+    assert remaining == {"新しい送信済み", "古い送信待ち"}

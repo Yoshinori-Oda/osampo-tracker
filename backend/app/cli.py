@@ -3,6 +3,7 @@
     docker compose run --rm api python -m app.cli seed-dev                 # 開発用のユーザーを入れる
     docker compose run --rm api python -m app.cli disable-user <email>     # アカウントを停止する
     docker compose run --rm api python -m app.cli enable-user <email>      # 停止を解除する
+    docker compose run --rm api python -m app.cli send-test-mail <宛先>    # テストメールをoutboxに積む(workerが送る)
 
 管理者の画面・APIができるまでの手段。
 """
@@ -17,7 +18,7 @@ from app.db import SessionLocal
 from app.models import User
 from app.models.user import ROLE_ADMIN, ROLE_USER
 from app.security import hash_password
-from app.services import auth_service
+from app.services import auth_service, mail_service
 from app.services.session_service import current_time
 
 # 開発用のユーザー(本番では使わない)。パスワードは開発用なのでここに置く
@@ -60,6 +61,19 @@ async def _set_disabled(db: AsyncSession, email: str, disabled: bool) -> None:
     print(f"{user.email}: {'停止しました(端末のログイン状態も無効にしました)' if disabled else '停止を解除しました'}")
 
 
+async def send_test_mail(to_address: str) -> None:
+    """テストメールをoutboxに積む。送信はworkerが行う(開発中はMailpitの画面 http://localhost:8025 で確認する)。"""
+    async with SessionLocal() as db:
+        email = await mail_service.enqueue_email(
+            db,
+            to_address=to_address,
+            subject="【osampo-tracker】テストメール",
+            body="osampo-trackerのメール送信のテストです。\nこのメールは開発用のコマンド(send-test-mail)で送りました。\n",
+        )
+        await db.commit()
+    print(f"outboxに積みました(id: {email.id})。workerが数秒以内に送ります")
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(prog="python -m app.cli", description="osampo-trackerの管理用のコマンド")
     commands = parser.add_subparsers(dest="command", required=True)
@@ -68,6 +82,8 @@ def main() -> None:
     disable.add_argument("email")
     enable = commands.add_parser("enable-user", help="アカウントの停止を解除する")
     enable.add_argument("email")
+    test_mail = commands.add_parser("send-test-mail", help="テストメールをoutboxに積む(workerが送る)")
+    test_mail.add_argument("to_address")
     args = parser.parse_args()
 
     if args.command == "seed-dev":
@@ -76,6 +92,8 @@ def main() -> None:
         asyncio.run(set_disabled(args.email, disabled=True))
     elif args.command == "enable-user":
         asyncio.run(set_disabled(args.email, disabled=False))
+    elif args.command == "send-test-mail":
+        asyncio.run(send_test_mail(args.to_address))
 
 
 if __name__ == "__main__":

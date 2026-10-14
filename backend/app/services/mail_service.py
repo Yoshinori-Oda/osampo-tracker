@@ -1,0 +1,132 @@
+"""メールのoutbox: apiが送るメールを積み、workerが取り出して送る。
+
+設計はbackend/docs/バックエンド構成.mdの「メール送信の基盤」。時刻はDBのclock_timestamp()を正とする。
+送信は「少なくとも1回」: SMTPサーバーが受け取った後、結果をcommitする前にworkerが落ちると、次の起動で同じメールをもう一度送る。
+"""
+
+import logging
+import uuid
+from collections.abc import Awaitable, Callable
+from dataclasses import dataclass
+from datetime import timedelta
+from email.message import EmailMessage
+
+from sqlalchemy import func, select
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.mail import PermanentMailError, build_message
+from app.models import OutboxEmail
+from app.models.outbox_email import OUTBOX_FAILED, OUTBOX_PENDING, OUTBOX_SENT
+from app.services.session_service import current_time
+
+logger = logging.getLogger(__name__)
+
+# メールを送る関数。テストではSMTPに接続しないものに差し替える
+SendFunc = Callable[[EmailMessage], Awaitable[None]]
+
+# 1回のジョブで送る上限(送信待ちが溜まっていても、次の実行に回して1回の実行を長引かせない)
+BATCH_SIZE = 20
+
+
+async def enqueue_email(
+    db: AsyncSession,
+    *,
+    to_address: str,
+    subject: str,
+    body: str,
+    recipient_user_id: uuid.UUID | None = None,
+) -> OutboxEmail:
+    """送るメールをoutboxに積む。commitは呼び出し元が業務のデータと一緒に行う(同じトランザクションで確定させるため)。"""
+    now = await current_time(db)
+    # server_defaultに任せると、flush後に値を読むときに暗黙のSELECTが起きる(非同期ではエラー)ので、値を明示する
+    email = OutboxEmail(
+        recipient_user_id=recipient_user_id,
+        to_address=to_address,
+        subject=subject,
+        body=body,
+        status=OUTBOX_PENDING,
+        attempts=0,
+        next_attempt_at=now,
+        created_at=now,
+    )
+    db.add(email)
+    await db.flush()
+    return email
+
+
+def retry_delay(attempts: int) -> timedelta:
+    """attempts回目の試行が一時的に失敗した後、次に試みるまでの間隔(1分、2分、4分、8分…と倍にする)。"""
+    return timedelta(minutes=2 ** (attempts - 1))
+
+
+@dataclass(frozen=True)
+class SendResult:
+    sent: int = 0
+    retrying: int = 0
+    failed: int = 0
+
+    @property
+    def processed(self) -> int:
+        return self.sent + self.retrying + self.failed
+
+
+async def send_pending_emails(
+    db: AsyncSession, send: SendFunc, *, max_attempts: int, batch_size: int = BATCH_SIZE
+) -> SendResult:
+    """送る時刻が来た送信待ちのメールを、1通ずつ送って結果を記録する(最大batch_size通)。
+
+    1通ごとに行をロックして取り出し(SKIP LOCKED: 他のworkerが処理中の行は飛ばす)、送信の結果を書いてcommitする。
+    """
+    sent = retrying = failed = 0
+    for _ in range(batch_size):
+        email = await db.scalar(
+            select(OutboxEmail)
+            .where(
+                OutboxEmail.status == OUTBOX_PENDING,
+                OutboxEmail.next_attempt_at <= func.clock_timestamp(),
+            )
+            .order_by(OutboxEmail.next_attempt_at)
+            .limit(1)
+            .with_for_update(skip_locked=True)
+        )
+        if email is None:
+            break
+
+        email.attempts += 1
+        try:
+            await send(build_message(email.to_address, email.subject, email.body or ""))
+        except PermanentMailError as exc:
+            await _give_up(db, email, exc)
+            failed += 1
+        except Exception as exc:
+            # 一時的な失敗。想定外の例外も再送の対象にし、ログで気づけるようにする
+            if email.attempts >= max_attempts:
+                await _give_up(db, email, exc)
+                failed += 1
+            else:
+                email.next_attempt_at = await current_time(db) + retry_delay(email.attempts)
+                logger.warning(
+                    "outbox email %s: temporary failure (attempt %d/%d), retry at %s: %s",
+                    email.id,
+                    email.attempts,
+                    max_attempts,
+                    email.next_attempt_at.isoformat(),
+                    exc,
+                )
+                retrying += 1
+        else:
+            email.status = OUTBOX_SENT
+            email.completed_at = await current_time(db)
+            # 確認コードが平文で入るので、送ったら本文を消す
+            email.body = None
+            logger.info("outbox email %s: sent (attempt %d)", email.id, email.attempts)
+            sent += 1
+        await db.commit()
+    return SendResult(sent=sent, retrying=retrying, failed=failed)
+
+
+async def _give_up(db: AsyncSession, email: OutboxEmail, exc: Exception) -> None:
+    email.status = OUTBOX_FAILED
+    email.completed_at = await current_time(db)
+    # 宛先のアドレスはログに出さず、行のidで追う
+    logger.error("outbox email %s: gave up after %d attempt(s): %s", email.id, email.attempts, exc)
