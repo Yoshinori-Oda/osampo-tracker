@@ -82,6 +82,10 @@ OpenAPI(実装から自動生成): http://localhost:8080/docs (JSONは http://lo
 | `not_acceptable` | 406 | Acceptで`application/json`を受け付けていない(GET) |
 | `id_conflicted` | 409 | 登録しようとしたidが別のsessionと衝突している |
 | `email_already_registered` | 409 | サインアップしようとしたメールアドレスは登録済み |
+| `email_already_verified` | 409 | メールアドレスは確認済みなので、確認コードを送らない |
+| `invalid_verification_code` | 400 | 確認コードが違う(入力し直せる) |
+| `verification_code_expired` | 400 | 有効な確認コードが無い(期限切れ・失敗の上限に達した・未送信。クライアントは再送を促す) |
+| `too_many_requests` | 429 | 確認コードの送信の間隔・回数の上限に達した(`Retry-After`ヘッダーの秒数だけ待つ) |
 | `deleted` | 409 | 対象のsessionが削除済み(tombstone)で、編集内容と競合している |
 | `payload_too_large` | 413 | bodyがサイズの上限(10MB)を超えている |
 | `unsupported_media_type` | 415 | Content-Typeが`application/json`でない(media typeはContent-Typeの値を指すHTTPの用語) |
@@ -430,7 +434,8 @@ UUIDを受け取る(ハードウェアの情報はOSが提供しないため)。
     備考:
         - 登録済みのメールアドレスを409で返すと、メールアドレスの登録の有無が分かってしまう。個人向けアプリなので許容する
           (本案件の要件定義に持ち帰る観点)
-        - メールアドレスの確認コードの送信・確認はブロック3で追加する
+        - 作成と同じトランザクションで、メールアドレスの確認コードを送る(下記「メールアドレスの確認のendpoints」。
+          24時間あたりの送信回数の1回に数える)
 
 - POST /auth/login
     body: { "email": "...", "password": "...", "device_id": "<UUID>", "device_name": "..." }
@@ -478,3 +483,35 @@ UUIDを受け取る(ハードウェアの情報はOSが提供しないため)。
           関連データの削除が求められる。停止(`disabled_at`)では足りない
         - 他の端末は次のリクエストで401(`unauthenticated`)になる
         - 将来のローカルアカウントへの変更(通常→ローカル)は、このendpointでサーバーのデータを削除し、端末のデータを残す形で行う
+
+## メールアドレスの確認のendpoints(ブロック3)
+
+設計(テーブル・流れ・判断の理由)は`backend/docs/バックエンド構成.md`の「メールアドレスの確認コード」。
+確認コードは6桁の数字で、有効期限は10分。サインアップ時に自動で送り、届かなければ再送する。
+
+- POST /users/me/email-verification
+    header: Authorization: Bearer <アクセストークン>   (bodyは無い)
+    レスポンス: 202 { "expires_in": 600, "resend_available_in": 60 }
+        - expires_in: 送ったコードの有効期限までの秒数
+        - resend_available_in: 次に再送できるまでの秒数(画面の再送ボタンを押せるようにするまでの待ち時間に使う)
+        - 202: メールは受け付けて送信待ちに積んだだけで、まだ送っていない(workerが数秒以内に送る)
+    処理:
+        1. 確認済みなら409(`email_already_verified`)。送らない
+        2. 前回の送信から60秒経っていない、または24時間あたりの送信回数(5回)に達している: 429(`too_many_requests`)。
+           送れるようになるまでの秒数を`Retry-After`ヘッダーで返す
+        3. 新しいコードを作って送る。前のコードは使えなくなり、前のコードのメールがまだ送られていなければ取り消す
+    備考: GETではなくPOSTにするのは、コードを作り・メールを送り・回数を数える(状態を変える)操作で、コードはレスポンスではなく
+          メールで届くため
+
+- POST /users/me/email-verification/confirm
+    header: Authorization: Bearer <アクセストークン>
+    body: { "code": "123456" }   (6桁の数字の文字列。それ以外は422)
+    レスポンス: 200 + GET /users/meと同じ形式(`email_verified`がtrue)
+    処理:
+        1. 確認済みなら、コードを見ずに200
+        2. 有効なコードが無い(期限切れ・失敗の上限に達した・まだ送っていない): 400(`verification_code_expired`)
+        3. コードが違う: 400(`invalid_verification_code`)。同じコードで5回間違えると、そのコードは使えなくなる
+           (以降は`verification_code_expired`。再送で新しいコードを受け取る)
+        4. コードが合う: メールアドレスを確認済みにする。以降、同期APIが使える
+    備考: 確認済みで200を返すのは、確認に成功したのにレスポンスが届かず(圏外等)クライアントが再送した場合に、
+          失敗に見えないようにするため(コードは使用済みで消えているので、照合すると失敗になる)
