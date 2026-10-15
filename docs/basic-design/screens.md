@@ -24,7 +24,7 @@
 | S-04 | メールアドレスの確認 | `views/auth/email_verification_page.dart` | 6桁の確認コードの入力と再発行 | F-ACC-04 |
 | S-10 | メイン | `views/main_page.dart` | 4つのタブの枠と共通のバナー | — |
 | S-11 | 収録タブ | `views/recording_page.dart` | 地図と現在地、収録の開始・停止、収録中の距離・時間 | F-REC-01〜04 |
-| S-12 | 履歴タブ(記録の一覧) | `views/saved_sessions.dart` | 保存した記録の一覧。編集モードで記録の編集・削除 | F-HIS-01、03、04 |
+| S-12 | 履歴タブ(記録の一覧) | `views/saved_sessions.dart` | 保存した記録の一覧とお気に入り。編集モードで記録の編集・削除 | F-HIS-01、03〜05 |
 | S-13 | 記録の詳細 | `views/session_detail_view.dart` | 軌跡の地図(ルート/全ピン)、集計値、高度のグラフ | F-HIS-02 |
 | S-14 | 統計タブ | `views/analytics_page.dart` | 期間ごとのグラフ、サマリー、自己ベスト | F-STA-01〜03 |
 | S-15 | 設定タブ | `views/settings_page.dart` | 表示名・メールアドレスの確認状態・パスワードの変更・ログアウト・アカウントの削除 | F-ACC-04〜09 |
