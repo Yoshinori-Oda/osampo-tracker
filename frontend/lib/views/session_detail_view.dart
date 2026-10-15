@@ -6,6 +6,7 @@ import 'package:latlong2/latlong.dart';
 
 import '../database/app_database.dart'; // Drift DBのモデルクラス
 import '../providers/tracking_providers.dart'; // trackPointsBySessionIdProvider があるファイル
+import '../utils/elevation_chart_data.dart';
 
 /// セッション詳細画面
 class SessionDetailView extends StatelessWidget {
@@ -469,22 +470,20 @@ class _ElevationChart extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    if (trackPoints.length < 2) {
+    // TrackPoint から (recordedAtの経過分, 高度) の FlSpot 配列を生成
+    final data = ElevationChartData.fromTrackPoints(trackPoints);
+    if (data == null) {
       return Container(
         height: 120,
         color: Colors.grey.shade100,
         child: const Center(child: Text('高度グラフ表示に十分なデータがありません')),
       );
     }
-
-    // TrackPoint から (インデックス, 高度) の FlSpot 配列を生成
-    final spots = trackPoints.asMap().entries.map((entry) {
-      return FlSpot(entry.key.toDouble(), entry.value.altitude!);
-    }).toList();
+    final timeInterval = elevationChartTimeInterval(data.maxX);
 
     return Container(
-      height: 180,
-      padding: const EdgeInsets.only(right: 16, left: 0, top: 12, bottom: 8),
+      height: 200,
+      padding: const EdgeInsets.only(right: 24, left: 0, top: 12, bottom: 8),
       decoration: BoxDecoration(
         color: Theme.of(context).colorScheme.surface,
         borderRadius: BorderRadius.circular(16),
@@ -492,6 +491,19 @@ class _ElevationChart extends StatelessWidget {
       ),
       child: LineChart(
         LineChartData(
+          minX: 0,
+          maxX: data.maxX,
+          lineTouchData: LineTouchData(
+            touchTooltipData: LineTouchTooltipData(
+              getTooltipItems: (touchedSpots) => touchedSpots
+                  .map((s) => LineTooltipItem(
+                        '${formatChartTimeLabel(data.timeAt(s.x))}\n'
+                        '${s.y.toStringAsFixed(0)} m',
+                        const TextStyle(color: Colors.white, fontSize: 12),
+                      ))
+                  .toList(),
+            ),
+          ),
           gridData: FlGridData(
             show: true,
             drawVerticalLine: false,
@@ -503,8 +515,28 @@ class _ElevationChart extends StatelessWidget {
           titlesData: FlTitlesData(
             topTitles: const AxisTitles(sideTitles: SideTitles(showTitles: false)),
             rightTitles: const AxisTitles(sideTitles: SideTitles(showTitles: false)),
-            bottomTitles: const AxisTitles(
-              sideTitles: SideTitles(showTitles: false), // X軸ラベル非表示
+            // X軸: recordedAtの時刻(HH:mm)
+            bottomTitles: AxisTitles(
+              sideTitles: SideTitles(
+                showTitles: true,
+                reservedSize: 24,
+                interval: timeInterval,
+                getTitlesWidget: (value, meta) {
+                  // fl_chartは両端(min/max)にもラベルを描くため、間隔の倍数以外は出さない
+                  // (右端のラベルが直前の目盛りラベルと重なるのを防ぐ)
+                  final remainder = value % timeInterval;
+                  if (remainder > 1e-6 && timeInterval - remainder > 1e-6) {
+                    return const SizedBox.shrink();
+                  }
+                  return SideTitleWidget(
+                    meta: meta,
+                    child: Text(
+                      formatChartTimeLabel(data.timeAt(value)),
+                      style: const TextStyle(fontSize: 10, color: Colors.grey),
+                    ),
+                  );
+                },
+              ),
             ),
             leftTitles: AxisTitles(
               sideTitles: SideTitles(
@@ -522,7 +554,9 @@ class _ElevationChart extends StatelessWidget {
           borderData: FlBorderData(show: false),
           lineBarsData: [
             LineChartBarData(
-              spots: spots,
+              spots: data.spots,
+              // 点の間隔が不均一でもスプラインが実データの範囲を大きくはみ出さないようにする
+              preventCurveOverShooting: true,
               isCurved: true,
               color: Colors.blueAccent,
               barWidth: 2.5,
