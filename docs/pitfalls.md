@@ -70,3 +70,26 @@
   (この不具合は誤った入れ子のdevcontainer定義で起動していた時期に、コンテナ内にFlutterが
   あった状態で発生した。現在はコンテナにFlutterを入れない方針なので同じ経路では再発しない
   はずだが、設定は念のため残しておく)
+
+## backend(Docker Compose)
+
+- **メインのチェックアウトとworktreeの`backend`は、composeのプロジェクト名が同じ`backend`になる**(`docker-compose.yml`に
+  `name:`が無く、ディレクトリ名から決まるため)。そのため次のようになる:
+  - コンテナとDBのボリューム(`backend_postgis_data`)を共有する。mainで`seed-dev`したユーザーはworktree側でもそのまま使え、
+    ユーザーの登録し直しは不要
+  - どちらで`up`したかで、apiにbind mountされる`app/`・`secrets/`の場所が変わる。同時に起動しない
+  - 古いコンテナが残っていると、`secrets/`(JWTの鍵)のマウントが反映されていないことがある。2026-10-08に、ログインだけが
+    500(`/app/secrets/jwt_private.pem`のFileNotFoundError)になる形で発生し、Docker環境の再起動で解消した
+- **秘密鍵はログインでトークンを発行するときに初めて読む**。トークン無しのリクエストへの401は鍵を読む前に返るので、
+  401が返っても鍵があることの証拠にならない。鍵がコンテナから見えるかは`docker compose exec api ls -la /app/secrets`で確かめる
+- 挙動がおかしいときは、`docker compose down`してから`up`し直す(`down -v`はDBのボリュームも消すので、データを残すなら付けない)
+
+## Drift・依存パッケージ
+
+- Driftのクエリで条件を`&`・`|`で結合するには、そのファイルで`package:drift/drift.dart`をimportする必要がある
+  (`BooleanExpressionOperators`の拡張。無いと`flutter analyze`で`undefined_operator`)。生成された`app_database.dart`を
+  importするだけでは足りない。Flutterの`Column`等と名前がぶつかる場合は`show BooleanExpressionOperators`で絞る
+- `flutter_secure_storage`の9系は、`geolocator` 14.0.3以上とwin32のメジャーバージョンが衝突して依存を解決できない
+  (9系はwin32 ^5、geolocatorの依存はwin32 ^6)。11系を使う。プラグインを追加・更新するときは`run_checks.sh <run_id> pubget`
+  の結果を先に確認し、`pubspec.lock`とプラットフォームごとのプラグイン登録ファイル(`linux/`・`macos/`・`windows/`の
+  `generated_plugin*`)の差分を一緒にcommitする
