@@ -260,6 +260,6 @@ stateDiagram-v2
 | 記録のtombstone(`sessions.deleted_at`が入った行) | 削除から90日(`PURGE_RETENTION_DAYS`) | workerが24時間ごとに物理削除する。90日より前に同期したきりの端末には、差分取得が突き合わせ(existence-check)を求める |
 | リフレッシュトークン | 有効期限(30日)まで | 期限を過ぎたものをworkerが物理削除する |
 | 無効にしたログイン状態(`auth_sessions.revoked_at`が入った行) | 無効にしてから30日 | workerが物理削除する |
-| メールの送信の記録(`outbox_emails`) | 送信済み(`sent`)・諦めた(`failed`)の行は作成から90日(`OUTBOX_RETENTION_DAYS`) | workerが物理削除する。本文は送信に成功した時点で消す。送信待ち(`pending`)の行は消さず、取り消した(`cancelled`)行は今はパージの対象に入っていない |
+| メールの送信の記録(`outbox_emails`) | 送信済み(`sent`)・諦めた(`failed`)・取り消した(`cancelled`)行は作成から90日(`OUTBOX_RETENTION_DAYS`) | workerが物理削除する。本文は送信に成功した時点で消す。送信待ち(`pending`)の行は消さない |
 | ユーザーと、その全てのデータ | アカウントを削除するまで | アカウントの削除で、サーバー・端末とも物理削除する |
 | 端末の`deletedUnsynced`の行 | サーバーでの削除が確認できるまで | 削除(DELETE)の成功、またはサーバーに無いことの確認で物理削除する |

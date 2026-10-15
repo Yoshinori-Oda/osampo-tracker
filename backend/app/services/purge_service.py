@@ -10,7 +10,7 @@ from sqlalchemy import delete, func
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models import AuthSession, OutboxEmail, RefreshToken, TrackingSession
-from app.models.outbox_email import OUTBOX_FAILED, OUTBOX_SENT
+from app.models.outbox_email import OUTBOX_CANCELLED, OUTBOX_FAILED, OUTBOX_SENT
 
 
 async def purge_expired_tombstones(db: AsyncSession, retention_days: int) -> int:
@@ -45,13 +45,13 @@ async def purge_expired_auth(db: AsyncSession, refresh_token_ttl_days: int) -> t
 
 
 async def purge_old_outbox_emails(db: AsyncSession, retention_days: int) -> int:
-    """送信済み・諦めたメールの記録のうち、積んでから保持期間(既定90日)を過ぎたものを物理削除し、削除した件数を返す。
+    """送信済み・諦めた・取り消したメールの記録のうち、積んでから保持期間(既定90日)を過ぎたものを物理削除し、削除した件数を返す。
 
     送信待ちの行は消さない。
     """
     result = await db.execute(
         delete(OutboxEmail).where(
-            OutboxEmail.status.in_([OUTBOX_SENT, OUTBOX_FAILED]),
+            OutboxEmail.status.in_([OUTBOX_SENT, OUTBOX_FAILED, OUTBOX_CANCELLED]),
             OutboxEmail.created_at < func.clock_timestamp() - timedelta(days=retention_days),
         )
     )
