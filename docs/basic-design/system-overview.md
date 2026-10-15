@@ -132,11 +132,11 @@ apiの応答がSMTPサーバーの遅延・障害の影響を受けず、送信�
 | 文書 | 内容 |
 |---|---|
 | `system-overview.md` | この文書 |
-| `features.md` | 機能一覧(予定) |
-| `screens.md` | 画面一覧・画面遷移(予定) |
-| `data.md` | データ設計(予定) |
-| `api.md` | API一覧(予定) |
-| `security.md` | 認証・セキュリティ(予定) |
+| `features.md` | 機能一覧 |
+| `screens.md` | 画面一覧・画面遷移 |
+| `data.md` | データ設計 |
+| `api.md` | API一覧 |
+| `security.md` | 認証・セキュリティ |
 
 ### 詳細設計
 
