@@ -47,7 +47,6 @@ dependencies:
   holiday_jp: ^0.0.8
   intl: ^0.20.3
   http: ^1.6.0
-  shared_preferences: ^2.5.5
   flutter_secure_storage: ^11.2.0
   permission_handler: ^12.0.1
 

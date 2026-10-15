@@ -39,7 +39,7 @@
       タイル利用ポリシーを確認し、`userAgentPackageName`を正式なアプリIDに揃える(現状は
       `net.wakuto.loctest`などが混在)
 - [ ] 利用しているOSSライセンスの表示(Flutterの`showLicensePage`等)
-- [ ] 不要物の整理: `lib/views/temp.dart`、デバッグ用の`print`、ダミーデータ・テストユーザー
+- [ ] 不要物の整理: デバッグ用の`print`、ダミーデータ・テストユーザー(`lib/views/temp.dart`と未使用の`shared_preferences`は2026-10-15に削除済み)
 
 ### ストア公開の準備
 
