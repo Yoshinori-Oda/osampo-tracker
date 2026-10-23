@@ -112,7 +112,6 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
       setState(() => _busy = false);
       _showSnackBar(switch (e.code) {
         AuthException.network => 'サーバーに接続できなかったため、削除できませんでした',
-        'unauthenticated' || 'token_expired' => 'ログインし直してから、もう一度削除してください',
         _ => 'アカウントを削除できませんでした(${e.code})',
       });
     }

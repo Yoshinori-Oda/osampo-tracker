@@ -213,6 +213,44 @@ void main() {
       expect(await db.getUser(_userId), isNotNull);
       expect(storage.stored, isNotNull);
     });
+
+    // 前回の削除がサーバーでは済んだのに結果が届かなかった場合、押し直すとログイン状態もユーザーも無いので401になる
+    test('アカウントの削除が401(unauthenticated)なら、削除済みとみなしてローカルのデータも消す', () async {
+      final service = createService((_) async => http.Response('', 204));
+      await signIn(service);
+      final client = AuthorizedClient(service, inner: MockClient((_) async => _error(401, 'unauthenticated')));
+
+      await service.deleteAccount(client);
+
+      expect(await db.getUser(_userId), isNull);
+      expect(storage.stored, isNull);
+      expect(service.userId, isNull);
+    });
+
+    test('アクセストークンが期限切れで、トークンの更新も拒否されたら、削除済みとみなしてローカルのデータも消す', () async {
+      final service = createService((_) async => _error(401, 'invalid_refresh_token'));
+      await signIn(service);
+      final client = AuthorizedClient(service, inner: MockClient((_) async => _error(401, 'token_expired')));
+
+      await service.deleteAccount(client);
+
+      expect(requests.single.url.path, '/api/auth/refresh');
+      expect(await db.getUser(_userId), isNull);
+      expect(storage.stored, isNull);
+    });
+
+    test('トークンの更新が通信できずに失敗したら、何も消さずにnetworkのAuthExceptionを投げる', () async {
+      final service = createService((_) async => throw http.ClientException('offline'));
+      await signIn(service);
+      final client = AuthorizedClient(service, inner: MockClient((_) async => _error(401, 'token_expired')));
+
+      await expectLater(
+        service.deleteAccount(client),
+        throwsA(isA<AuthException>().having((e) => e.code, 'code', AuthException.network)),
+      );
+      expect(await db.getUser(_userId), isNotNull);
+      expect(storage.stored, isNotNull);
+    });
   });
 
   group('メールアドレスの確認コード', () {
@@ -391,7 +429,7 @@ void main() {
       expect(invalidated, 1);
     });
 
-    test('トークンの更新が通信できずに失敗したら、onAuthInvalidは呼ばない(次の機会に再び試す)', () async {
+    test('トークンの更新が通信できずに失敗したら、onAuthInvalidは呼ばずに通信の失敗として例外を投げる(次の機会に再び試す)', () async {
       final service = createService((_) async => throw http.ClientException('offline'));
       await signIn(service);
       var invalidated = 0;
@@ -401,10 +439,9 @@ void main() {
         onAuthInvalid: () => invalidated++,
       );
 
-      final response = await client.get(Uri.parse('$_baseUrl/users/me'));
-
-      expect(response.statusCode, 401);
+      await expectLater(client.get(Uri.parse('$_baseUrl/users/me')), throwsA(isA<http.ClientException>()));
       expect(invalidated, 0);
+      expect(storage.stored!.accessToken, 'access-0');
     });
 
     test('token_expired以外の401(ログアウト済み等)は更新せずにonAuthInvalidを呼ぶ', () async {

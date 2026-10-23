@@ -50,6 +50,9 @@ class AuthService {
   Future<RefreshOutcome>? _refreshing;
 
   static const Duration _timeoutDuration = Duration(seconds: 5);
+  // アカウントの削除はサーバーで記録をまとめて消すので時間がかかる。待ちきれずに諦めると、サーバーでは削除が済んだのに
+  // 端末のデータが残ってしまうため、長めに待つ
+  static const Duration _deleteAccountTimeoutDuration = Duration(seconds: 30);
   static const Map<String, String> _jsonHeaders = {
     'Content-Type': 'application/json',
     'Accept': 'application/json',
@@ -291,7 +294,10 @@ class AuthService {
     _current = null;
   }
 
-  /// アカウントを削除する(サーバーで物理削除し、成功したら端末のそのユーザーのデータも消す)
+  /// アカウントを削除する(サーバーで物理削除し、成功したら端末のそのユーザーのデータも消す)。
+  /// 401(トークンの更新も拒否された場合を含む)も削除済みとみなして端末のデータを消す。前回の削除がサーバーでは済んだのに
+  /// 結果が届かなかった場合、ログイン状態もユーザーも消えているので、押し直すと401になる(ログインし直すこともできない)。
+  /// 自分のアカウントにしか届かない操作で、別の端末での同時の操作も想定しないため、401を削除済みとして扱ってよいとした
   Future<void> deleteAccount(http.Client authorizedClient) async {
     final current = _current;
     if (current == null) return;
@@ -299,11 +305,11 @@ class AuthService {
     try {
       response = await authorizedClient
         .delete(Uri.parse('$_baseUrl/users/me'))
-        .timeout(_timeoutDuration);
+        .timeout(_deleteAccountTimeoutDuration);
     } catch (_) {
       throw const AuthException(AuthException.network);
     }
-    if (response.statusCode != 204) {
+    if (response.statusCode != 204 && response.statusCode != 401) {
       throw AuthException(_errorCode(response) ?? 'unknown', statusCode: response.statusCode);
     }
     await _db.deleteUserData(current.userId);
