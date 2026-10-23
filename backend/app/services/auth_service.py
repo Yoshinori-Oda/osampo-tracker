@@ -19,9 +19,11 @@ from app.models.audit_event import (
     EVENT_ACCOUNT_DISABLED,
     EVENT_ACCOUNT_ENABLED,
     EVENT_LOGIN_FAILED,
+    EVENT_LOGIN_LOCKED,
     EVENT_LOGIN_SUCCEEDED,
     EVENT_LOGOUT,
     EVENT_PASSWORD_CHANGE_FAILED,
+    EVENT_PASSWORD_CHANGE_LOCKED,
     EVENT_PASSWORD_CHANGED,
     EVENT_REFRESH_TOKEN_REUSED,
     EVENT_SIGNUP,
@@ -34,7 +36,7 @@ from app.schemas.auth import (
     UpdateMeRequest,
     UserResponse,
 )
-from app.services import audit_service, mail_service
+from app.services import attempt_limit_service, audit_service, mail_service
 from app.services.email_verification_service import issue_verification_code
 from app.services.session_service import current_time
 
@@ -101,7 +103,19 @@ def _email_already_registered() -> AppError:
 
 async def login(db: AsyncSession, body: LoginRequest) -> TokenResponse:
     email = body.email.lower()
+    # 試行回数の上限でロック中なら、パスワードを照合せずに429にする(存在しないメールアドレスも同じに扱う)
+    retry_after = await attempt_limit_service.login_retry_after(db, email)
     user = await db.scalar(select(User).where(User.email == email))
+    if retry_after is not None:
+        audit_service.record(
+            db,
+            EVENT_LOGIN_LOCKED,
+            user_id=user.id if user else None,
+            email=email,
+            device_id=body.device_id,
+        )
+        await db.commit()
+        raise attempt_limit_service.too_many_attempts(retry_after)
     # ユーザーが無い場合もダミーのハッシュで検証する(応答時間でユーザーの有無を区別できないようにする)
     password_ok = security.verify_password(body.password, user.password_hash if user else None)
     if user is None or not password_ok:
@@ -300,6 +314,14 @@ async def change_password(db: AsyncSession, auth: AuthContext, body: ChangePassw
     変更を知らせるメールを本人に送る(乗っ取りに早く気づけるように)。今と同じパスワードへの変更も受け付ける。
     """
     user = auth.user
+    # 試行回数の上限でロック中なら、現在のパスワードを照合せずに429にする(ログインとは別に数える)
+    retry_after = await attempt_limit_service.reauth_retry_after(db, user.id)
+    if retry_after is not None:
+        audit_service.record(
+            db, EVENT_PASSWORD_CHANGE_LOCKED, user_id=user.id, email=user.email, device_id=auth.device_id
+        )
+        await db.commit()
+        raise attempt_limit_service.too_many_attempts(retry_after)
     if not security.verify_password(body.current_password, user.password_hash):
         audit_service.record(
             db, EVENT_PASSWORD_CHANGE_FAILED, user_id=user.id, email=user.email, device_id=auth.device_id

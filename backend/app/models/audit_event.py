@@ -12,10 +12,12 @@ from app.models.base import Base
 EVENT_SIGNUP = "signup"
 EVENT_LOGIN_SUCCEEDED = "login_succeeded"
 EVENT_LOGIN_FAILED = "login_failed"  # reasonにinvalid_credentials・account_disabled
+EVENT_LOGIN_LOCKED = "login_locked"  # 試行回数の上限でロック中のため、照合せずに拒否した(失敗には数えない)
 EVENT_LOGOUT = "logout"
 EVENT_REFRESH_TOKEN_REUSED = "refresh_token_reused"  # 使用済みのリフレッシュトークンの再使用(盗まれた疑い)
 EVENT_PASSWORD_CHANGED = "password_changed"
 EVENT_PASSWORD_CHANGE_FAILED = "password_change_failed"  # 現在のパスワードの間違い
+EVENT_PASSWORD_CHANGE_LOCKED = "password_change_locked"  # 試行回数の上限でロック中のため、照合せずに拒否した
 EVENT_EMAIL_VERIFIED = "email_verified"
 EVENT_ACCOUNT_DELETED = "account_deleted"  # 日時とuser_idだけを残す
 EVENT_ACCOUNT_DISABLED = "account_disabled"  # 管理用のコマンドでの停止

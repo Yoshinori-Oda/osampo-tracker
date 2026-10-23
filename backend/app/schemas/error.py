@@ -55,7 +55,9 @@ ERROR_CODE_DESCRIPTIONS: dict[ErrorCode, str] = {
     ErrorCode.EMAIL_ALREADY_VERIFIED: "メールアドレスは確認済み(確認コードを送らない)",
     ErrorCode.INVALID_VERIFICATION_CODE: "確認コードが違う(入力し直す)",
     ErrorCode.VERIFICATION_CODE_EXPIRED: "有効な確認コードが無い(期限切れ・失敗の上限に達した・未送信。再送する)",
-    ErrorCode.TOO_MANY_REQUESTS: "送信の間隔・回数の上限に達した(Retry-Afterヘッダーの秒数だけ待つ)",
+    ErrorCode.TOO_MANY_REQUESTS: (
+        "送信の間隔・回数、またはログイン・パスワードの確認の試行回数の上限に達した(Retry-Afterヘッダーの秒数だけ待つ)"
+    ),
     ErrorCode.USER_NOT_FOUND: "パスのuser_idのユーザーが存在しない",
     ErrorCode.SESSION_NOT_FOUND: "当該ユーザーのsessionとして存在しない(パージ済み・未登録・他ユーザーのもの)",
     ErrorCode.NOT_FOUND: "存在しないパス",

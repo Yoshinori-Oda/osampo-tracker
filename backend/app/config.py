@@ -51,6 +51,12 @@ class Settings(BaseSettings):
     mail_poll_interval_seconds: int = 5
     mail_max_attempts: int = 5
     outbox_retention_days: int = 90
+    # ログインと、現在のパスワードによる再確認(パスワードの変更)の試行回数の制限。2つは別に数え、同じ値を使う。
+    # 直近の成功より後の失敗が、ウィンドウ(分)以内に上限の回数たまったら、最後の失敗からロックする(分)
+    auth_max_failed_attempts: int = 10
+    auth_failure_window_minutes: int = 15
+    auth_lock_minutes: int = 15
+
     # 監査ログ(audit_events)を残す日数。アカウントの削除の記録も含めて、これを過ぎたら消す
     audit_event_retention_days: int = 90
 

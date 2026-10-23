@@ -40,7 +40,12 @@ async def signup(body: SignupRequest, db: DbSession) -> TokenResponse:
     response_model=TokenResponse,
     dependencies=[Depends(require_json_content_type)],
     responses=error_responses(
-        {401: [ErrorCode.INVALID_CREDENTIALS], 403: [ErrorCode.ACCOUNT_DISABLED], **_BODY}
+        {
+            401: [ErrorCode.INVALID_CREDENTIALS],
+            403: [ErrorCode.ACCOUNT_DISABLED],
+            **_BODY,
+            429: [ErrorCode.TOO_MANY_REQUESTS],
+        }
     ),
 )
 async def login(body: LoginRequest, db: DbSession) -> TokenResponse:
@@ -49,6 +54,8 @@ async def login(body: LoginRequest, db: DbSession) -> TokenResponse:
     - メールアドレスが無い・パスワードが違うは区別せず401(`invalid_credentials`)
     - 停止中のアカウントは、パスワードが合っていた場合のみ403(`account_disabled`)
     - 同じ端末(`device_id`)の古いログイン状態は無効にする
+    - 同じメールアドレスで15分以内に10回失敗すると、最後の失敗から15分はパスワードを照合せずに429(`too_many_requests`。
+      待つ秒数は`Retry-After`ヘッダー)。存在しないメールアドレスも同じように数える
     """
     return await auth_service.login(db, body)
 

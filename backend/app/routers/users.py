@@ -64,6 +64,7 @@ async def update_me(body: UpdateMeRequest, auth: CurrentAuth, db: DbSession) -> 
             413: [ErrorCode.PAYLOAD_TOO_LARGE],
             415: [ErrorCode.UNSUPPORTED_MEDIA_TYPE],
             422: [ErrorCode.VALIDATION_ERROR],
+            429: [ErrorCode.TOO_MANY_REQUESTS],
         }
     ),
 )
@@ -74,6 +75,8 @@ async def change_password(body: ChangePasswordRequest, auth: CurrentAuth, db: Db
       「ログイン状態が無効になった(再ログインが必要)」として扱うため
     - この端末以外のログイン状態は全て無効になる(この端末はログインしたまま)
     - 変更を知らせるメールを本人に送る
+    - 現在のパスワードを15分以内に10回間違えると、最後の失敗から15分は照合せずに429(`too_many_requests`。待つ秒数は
+      `Retry-After`ヘッダー)。ログインの試行回数とは別に、ユーザーごとに数える
     """
     await auth_service.change_password(db, auth, body)
     return Response(status_code=status.HTTP_204_NO_CONTENT)

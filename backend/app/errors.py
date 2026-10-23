@@ -27,7 +27,8 @@ class ErrorCode(StrEnum):
     EMAIL_ALREADY_VERIFIED = "email_already_verified"  # 409: 確認済みなので確認コードを送らない
     INVALID_VERIFICATION_CODE = "invalid_verification_code"  # 400: 確認コードが違う(入力し直せる)
     VERIFICATION_CODE_EXPIRED = "verification_code_expired"  # 400: 有効な確認コードが無い(再送が必要)
-    TOO_MANY_REQUESTS = "too_many_requests"  # 429: 送信の間隔・回数の上限。Retry-Afterの秒数だけ待つ
+    # 429: 送信の間隔・回数の上限、ログイン・パスワードの確認の試行回数の上限。Retry-Afterの秒数だけ待つ
+    TOO_MANY_REQUESTS = "too_many_requests"
 
     # リソース
     USER_NOT_FOUND = "user_not_found"  # 404: パスパラメーターのuser_idのユーザーが存在しない
