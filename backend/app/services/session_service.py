@@ -2,8 +2,10 @@
 
 時刻はDBのclock_timestamp()(実行した瞬間のサーバー時刻)を正とする。端末の時計は使わない。
 処理を続けられない場合はAppErrorを投げる(routersで共通の形式のエラーレスポンスになる)。
+404・409の理由(レスポンスではわざと区別しないもの)は、アプリのログのINFOに出す(backend/docs/バックエンド構成.mdの「ログ」)。
 """
 
+import logging
 import uuid
 from datetime import datetime, timedelta
 
@@ -24,6 +26,8 @@ from app.schemas.session import (
     TrackPointIn,
     TrackPointOut,
 )
+
+logger = logging.getLogger(__name__)
 
 # 再送の判定で、同じsessionかどうかを見分けるのに使う不変の項目(API設計書の特定項目*1)
 IMMUTABLE_FIELDS = (
@@ -224,15 +228,28 @@ async def _resolve_resent_session(
     """同じidのレコードが既にある場合の判定(API設計書のPOSTの手順8)。"""
     # 他ユーザーのレコード、または不変の項目が違う場合は別のsession(idの衝突)とみなす。
     # 他ユーザーのレコードは中身を比べない(他ユーザーのデータの内容を探る手段にしないため)
-    if existing.user_id != user_id or any(
+    other_user = existing.user_id != user_id
+    if other_user or any(
         getattr(existing, field) != getattr(body, field) for field in IMMUTABLE_FIELDS
     ):
+        # 他ユーザーのuser_idはログにも出さない
+        logger.info(
+            "session id conflicted",
+            extra={
+                "session_id": body.id,
+                "reason": "other_user" if other_user else "different_session",
+            },
+        )
         raise AppError(409, ErrorCode.ID_CONFLICTED, "idが別のセッションと衝突しています")
 
     changed = _mutable_fields_changed(existing, body)
     if existing.deleted_at is not None:
         # 削除済みのsessionへの、ローカルでの編集を含む再送は、削除と編集の競合
         if changed:
+            logger.info(
+                "session edit conflicted with deletion",
+                extra={"session_id": existing.id, "action": "resend"},
+            )
             raise AppError(409, ErrorCode.DELETED, "セッションは削除済みです")
         # 登録は成功していたので成功として返す。削除は次のGETでtombstoneとして届く
         return 200, existing.updated_at
@@ -286,6 +303,10 @@ async def edit_session(
 
     if target.deleted_at is not None:
         if not restore:
+            logger.info(
+                "session edit conflicted with deletion",
+                extra={"session_id": target.id, "action": "edit"},
+            )
             raise AppError(409, ErrorCode.DELETED, "セッションは削除済みです")
         target.deleted_at = None
         _apply_mutable_fields(target, body)
@@ -343,13 +364,25 @@ async def find_missing_session_ids(
 async def _find_own_session(
     db: AsyncSession, user_id: uuid.UUID, session_id: uuid.UUID
 ) -> TrackingSession:
-    """当該ユーザーのsessionを行ロック付きで取得する。他ユーザーのもの・存在しないものは区別せず404にする。"""
+    """当該ユーザーのsessionを行ロック付きで取得する。他ユーザーのもの・存在しないものは区別せず404にする。
+
+    レスポンスでは区別しない理由(無い・他ユーザーのもの)を、調査のためにアプリのログにだけ出す。
+    """
     target = await db.scalar(
         select(TrackingSession)
         .where(TrackingSession.id == session_id, TrackingSession.user_id == user_id)
         .with_for_update()
     )
     if target is None:
+        exists = await db.scalar(select(TrackingSession.id).where(TrackingSession.id == session_id))
+        # 他ユーザーのuser_idはログにも出さない
+        logger.info(
+            "session not found",
+            extra={
+                "session_id": session_id,
+                "reason": "other_user" if exists is not None else "not_exists",
+            },
+        )
         raise AppError(404, ErrorCode.SESSION_NOT_FOUND, "セッションが見つかりません")
     return target
 

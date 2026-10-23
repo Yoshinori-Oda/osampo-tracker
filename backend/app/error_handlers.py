@@ -12,9 +12,10 @@ from fastapi.responses import JSONResponse
 from starlette.exceptions import HTTPException as StarletteHTTPException
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
+from app import request_context
 from app.errors import AppError, ErrorCode
 
-logger = logging.getLogger(__name__)
+logger = logging.getLogger("app.errors")
 
 # FastAPI・Starletteが既定で投げるHTTPExceptionのステータスとcodeの対応
 _HTTP_STATUS_CODES: dict[int, ErrorCode] = {
@@ -45,6 +46,8 @@ def error_response(
     details: list[dict[str, str]] | None = None,
     headers: dict[str, str] | None = None,
 ) -> JSONResponse:
+    # アクセスログにcodeを載せる
+    request_context.set_error_code(code)
     content: dict[str, object] = {"code": code, "message": message}
     # detailsは422のときだけ入れる(Noneならキー自体を含めない)
     if details is not None:
@@ -80,9 +83,19 @@ async def _handle_validation_error(request: Request, exc: RequestValidationError
 
 
 async def _handle_unexpected_error(request: Request, exc: Exception) -> JSONResponse:
-    """想定外のエラー。原因(スタックトレース)はログにだけ出し、レスポンスには含めない。"""
-    logger.exception("Unhandled error: %s %s", request.method, request.url.path)
-    return error_response(500, ErrorCode.INTERNAL_ERROR, "サーバーで想定外のエラーが発生しました")
+    """想定外のエラー。原因(スタックトレース)はログにだけ出し、レスポンスには含めない。
+
+    ログはapp/request_context.pyのミドルウェアが出す(このハンドラーはミドルウェアの外側で動き、リクエストの情報を
+    参照できないため)。リクエストIDはscopeに置かれたものをヘッダーに付ける。
+    """
+    context = request.scope.get("request_context")
+    if context is None:
+        # ミドルウェアを入れていないアプリ(テスト用の小さなアプリ等)では、ここでログに出す
+        logger.error("Unhandled error: %s %s", request.method, request.url.path, exc_info=exc)
+    headers = {request_context.REQUEST_ID_HEADER: context.request_id} if context else None
+    return error_response(
+        500, ErrorCode.INTERNAL_ERROR, "サーバーで想定外のエラーが発生しました", headers=headers
+    )
 
 
 class BodySizeLimitMiddleware:

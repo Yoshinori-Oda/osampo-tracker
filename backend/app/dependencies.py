@@ -7,6 +7,7 @@ from fastapi import Depends, Request
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app import request_context
 from app.db import get_session
 from app.errors import AppError, ErrorCode
 from app.models.audit_event import EVENT_ACCESS_DENIED, EVENT_ADMIN_USER_ACCESS
@@ -53,7 +54,10 @@ async def get_auth_context(
     """Authorization: Bearer のアクセストークンを検証し、認証されたユーザーを返す(できなければ401)。"""
     if credentials is None:
         raise AppError(401, ErrorCode.UNAUTHENTICATED, "認証が必要です")
-    return await auth_service.authenticate(db, credentials.credentials)
+    auth = await auth_service.authenticate(db, credentials.credentials)
+    # アクセスログ・アプリのログに載せる
+    request_context.set_user_id(auth.user.id)
+    return auth
 
 
 CurrentAuth = Annotated[AuthContext, Depends(get_auth_context)]

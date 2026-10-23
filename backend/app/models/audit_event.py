@@ -62,3 +62,5 @@ class AuditEvent(Base):
     ip: Mapped[str | None] = mapped_column(INET)
     # 操作の対象のユーザー(他人のデータへのアクセス等)
     target_user_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True))
+    # リクエストID(同じリクエストのアクセスログ・アプリのログをたどるため。管理用のコマンドからの操作ではnull)
+    request_id: Mapped[str | None] = mapped_column(String(64))

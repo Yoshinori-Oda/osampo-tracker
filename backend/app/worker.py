@@ -12,6 +12,7 @@ from apscheduler.schedulers.asyncio import AsyncIOScheduler
 
 from app.config import settings
 from app.db import SessionLocal
+from app.logging_config import configure_logging
 from app.mail import send_via_smtp
 from app.services.mail_service import send_pending_emails
 from app.services.purge_service import (
@@ -37,13 +38,14 @@ async def purge_job() -> None:
             emails = await purge_old_outbox_emails(db, settings.outbox_retention_days)
             audit_events = await purge_old_audit_events(db, settings.audit_event_retention_days)
         logger.info(
-            "purged %d expired tombstone(s), %d refresh token(s), %d auth session(s), %d outbox email(s), "
-            "%d audit event(s)",
-            purged,
-            tokens,
-            auth_sessions,
-            emails,
-            audit_events,
+            "purged",
+            extra={
+                "tombstones": purged,
+                "refresh_tokens": tokens,
+                "auth_sessions": auth_sessions,
+                "outbox_emails": emails,
+                "audit_events": audit_events,
+            },
         )
     except Exception:
         logger.exception("failed to purge")
@@ -58,14 +60,15 @@ async def send_mail_job() -> None:
             )
         if result.processed:
             logger.info(
-                "outbox: %d sent, %d retrying, %d failed", result.sent, result.retrying, result.failed
+                "outbox processed",
+                extra={"sent": result.sent, "retrying": result.retrying, "failed": result.failed},
             )
     except Exception:
         logger.exception("failed to send emails")
 
 
 async def main() -> None:
-    logging.basicConfig(level=logging.INFO)
+    configure_logging(settings.log_format, settings.log_level)
     # APSchedulerはジョブを実行するたびにINFOのログを出す。メールの送信は5秒ごとなので、WARNING以上だけにする
     logging.getLogger("apscheduler").setLevel(logging.WARNING)
 

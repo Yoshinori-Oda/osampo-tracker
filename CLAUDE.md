@@ -54,13 +54,13 @@ Claude Code がこのプロジェクトで作業する際のコンテキスト�
 
 - backend: Dockerで動かすバックエンド(FastAPIのapi + 定期実行のworker + PostgreSQL)
   - app/: FastAPIのアプリ本体(config.py: 設定、db.py: DB接続、main.py: アプリ、worker.py: 定期実行、
-    security.py: パスワードのハッシュ・トークン、mail.py: SMTPでのメールの送信、cli.py: 管理用のコマンド(シード・アカウントの停止・テストメール)、
+    logging_config.py・request_context.py: ログの形式とリクエストID・アクセスログ、security.py: パスワードのハッシュ・トークン、mail.py: SMTPでのメールの送信、cli.py: 管理用のコマンド(シード・アカウントの停止・テストメール)、
     routers/・schemas/・services/・models/: レイヤ。詳細は`backend/docs/バックエンド構成.md`)
   - tests/: pytest
   - pyproject.toml・uv.lock: 依存パッケージ(uv)。Dockerfile: api・worker共通のイメージ
   - alembic.ini・migrations/: Alembicのマイグレーション。0001は旧initdb.sqlのスキーマ(とPostgREST用のストアドファンクション)を
     そのまま写したもの、0002は高度関連の3列のdouble precision化、0003はPostgRESTの削除(ストアドファンクションの削除と
-    deleted_atの「削除した日時」への統一)、0004は認証、0005はメールのoutbox、0006はメールアドレスの確認コード、0007は監査ログ
+    deleted_atの「削除した日時」への統一)、0004は認証、0005はメールのoutbox、0006はメールアドレスの確認コード、0007は監査ログ、0008は監査ログのリクエストID
   - db/init/: DBコンテナの初回起動時に実行するスクリプト(ロール・テスト用データベース・拡張機能・権限)
   - db/seed.sql: 開発用のダミーデータ(テストユーザー`1111...`とセッション)
   - docker-compose.yml: db / api / worker / mailpit。DBの接続情報は`backend/.env`(コミットしない)。

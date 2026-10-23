@@ -1,5 +1,13 @@
 # DBの接続情報は同じディレクトリの.env(コミットしない)から読み込む。項目はbackend/docs/バックエンド構成.mdを参照。
 # 各サービスには必要な接続情報だけを渡す(例: workerにはマイグレーション用のロールを渡さない)
+
+# ログはDockerのjson-fileに溜まるので、ファイルの大きさと数に上限を付ける(既定では無制限に増える)
+x-logging: &default-logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "3"
+
 services:
   db:
     image: postgis/postgis:16-3.4
@@ -27,11 +35,16 @@ services:
       interval: 5s
       timeout: 5s
       retries: 10
+    logging: *default-logging
 
   api:
     build: .
-    command: ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8080", "--reload"]
+    # アクセスログはアプリ(app/request_context.py)が出すので、uvicorn標準のものは止める
+    command: ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8080", "--reload", "--no-access-log"]
     environment:
+      # ログの形式(text・json)とレベル。項目はbackend/docs/バックエンド構成.mdの「ログ」
+      LOG_FORMAT: ${LOG_FORMAT:-text}
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
       POSTGRES_DB: ${POSTGRES_DB}
       POSTGRES_TEST_DB: ${POSTGRES_TEST_DB}
       APP_DB_USER: ${APP_DB_USER}
@@ -63,12 +76,15 @@ services:
       timeout: 5s
       retries: 5
     restart: unless-stopped
+    logging: *default-logging
 
   # apiと同じイメージで起動コマンドだけを変える。ジョブが重複しないよう1つだけ起動する
   worker:
     build: .
     command: ["python", "-m", "app.worker"]
     environment:
+      LOG_FORMAT: ${LOG_FORMAT:-text}
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
       POSTGRES_DB: ${POSTGRES_DB}
       APP_DB_USER: ${APP_DB_USER}
       APP_DB_PASSWORD: ${APP_DB_PASSWORD}
@@ -92,6 +108,7 @@ services:
       mailpit:
         condition: service_started
     restart: unless-stopped
+    logging: *default-logging
 
   # 開発用のSMTP受信サーバー。送信したメールはhttp://localhost:8025で確認できる(外部には送らない)。
   # SMTPはcomposeの中(mailpit:1025)からだけ使うので、ホストには公開しない

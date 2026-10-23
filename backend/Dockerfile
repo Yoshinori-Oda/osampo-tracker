@@ -18,4 +18,5 @@ RUN uv sync --locked
 
 COPY . .
 
-CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8080"]
+# アクセスログはアプリ(app/request_context.py)が出すので、uvicorn標準のものは止める
+CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8080", "--no-access-log"]

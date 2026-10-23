@@ -114,6 +114,7 @@ erDiagram
         uuid device_id
         inet ip
         uuid target_user_id
+        varchar request_id
     }
 ```
 

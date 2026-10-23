@@ -12,7 +12,7 @@ from sqlalchemy import select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app import security
+from app import request_context, security
 from app.errors import AppError, ErrorCode
 from app.models import AuthSession, RefreshToken, User
 from app.models.audit_event import (
@@ -152,6 +152,7 @@ async def _start_auth_session(
     db: AsyncSession, user: User, device_id: uuid.UUID, device_name: str | None
 ) -> TokenResponse:
     """端末のログイン状態を作り、最初のリフレッシュトークンとアクセストークンを発行する(commitは呼び出し元)。"""
+    request_context.set_user_id(user.id)
     now = await current_time(db)
     # 同じユーザー・同じ端末の有効なログイン状態があれば無効にする(有効なものは端末ごとに1つだけ)
     await db.execute(
@@ -235,6 +236,7 @@ async def refresh(db: AsyncSession, refresh_token: str) -> TokenResponse:
 
     token.used_at = now
     auth_session.last_used_at = now
+    request_context.set_user_id(user.id)
     tokens = _issue_tokens(db, user, auth_session, now)
     await db.commit()
     return tokens

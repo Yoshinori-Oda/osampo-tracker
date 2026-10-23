@@ -3,6 +3,7 @@ from fastapi.routing import APIRoute
 
 from app.config import settings
 from app.error_handlers import install_error_handling
+from app.logging_config import configure_logging
 from app.request_context import RequestContextMiddleware
 from app.routers import auth, health, sessions, users
 
@@ -24,6 +25,8 @@ def _operation_id(route: APIRoute) -> str:
     return route.name
 
 
+configure_logging(settings.log_format, settings.log_level)
+
 app = FastAPI(
     title="osampo-tracker API",
     version="0.1.0",
@@ -33,7 +36,8 @@ app = FastAPI(
 
 # エラーを共通の形式({"code", "message", "details"})で返す例外ハンドラーと、bodyのサイズの上限
 install_error_handling(app, max_body_bytes=settings.max_request_body_bytes)
-# 監査ログに残す送信元のIPを、サービスの処理から参照できるようにする
+# リクエストID・送信元のIP・認証したユーザーをサービスの処理とログから参照できるようにし、アクセスログを出す。
+# 最後に追加したミドルウェアが一番外側になるので、bodyのサイズの上限で返す413もアクセスログに載る
 app.add_middleware(RequestContextMiddleware)
 
 # /healthは運用(composeのhealthcheck)用なので、APIのパス(/api/...)の外に置く

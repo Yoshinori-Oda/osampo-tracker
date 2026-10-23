@@ -12,7 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models import AuditEvent
 from app.models.audit_event import EVENT_ACCOUNT_DELETED
-from app.request_context import client_ip
+from app.request_context import client_ip, request_id
 
 
 def record(
@@ -25,7 +25,7 @@ def record(
     target_user_id: uuid.UUID | None = None,
     reason: str | None = None,
 ) -> None:
-    """出来事を1件記録する(セッションに加えるだけで、commitしない)。送信元のIPは今のリクエストから取る。"""
+    """出来事を1件記録する(セッションに加えるだけで、commitしない)。送信元のIPとリクエストIDは今のリクエストから取る。"""
     db.add(
         AuditEvent(
             event_type=event_type,
@@ -35,6 +35,7 @@ def record(
             device_id=device_id,
             ip=client_ip(),
             target_user_id=target_user_id,
+            request_id=request_id(),
         )
     )
 

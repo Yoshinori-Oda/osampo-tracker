@@ -1,3 +1,5 @@
+from typing import Literal
+
 from pydantic import SecretStr
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from sqlalchemy import URL
@@ -24,6 +26,10 @@ class Settings(BaseSettings):
     # マイグレーション(Alembic)用のロール(テーブルの作成・変更ができる)。workerには渡さない
     migrator_db_user: str | None = None
     migrator_db_password: SecretStr | None = None
+
+    # ログ(api・worker)。形式はtext(key=value。既定)かjson(1行1つのJSON)、レベルはDEBUG・INFO・WARNING・ERROR
+    log_format: Literal["text", "json"] = "text"
+    log_level: str = "INFO"
 
     # リクエストのbodyのサイズの上限(uvicorn・FastAPIには既定の上限が無いため)。超えると413を返す
     max_request_body_bytes: int = 10 * 1024 * 1024
