@@ -96,7 +96,7 @@ class AuthService {
       throw const AuthException(AuthException.network);
     }
     if (response.statusCode ~/ 100 != 2) {
-      throw AuthException(_errorCode(response) ?? 'unknown', statusCode: response.statusCode);
+      throw _exceptionFrom(response);
     }
 
     final tokens = json.decode(response.body) as Map<String, dynamic>;
@@ -186,11 +186,7 @@ class AuthService {
       throw const AuthException(AuthException.network);
     }
     if (response.statusCode != 202) {
-      throw AuthException(
-        _errorCode(response) ?? 'unknown',
-        statusCode: response.statusCode,
-        retryAfterSeconds: int.tryParse(response.headers['retry-after'] ?? ''),
-      );
+      throw _exceptionFrom(response);
     }
     final body = json.decode(response.body) as Map<String, dynamic>;
     return body['resend_available_in'] as int;
@@ -245,7 +241,7 @@ class AuthService {
       throw const AuthException(AuthException.network);
     }
     if (response.statusCode != 204) {
-      throw AuthException(_errorCode(response) ?? 'unknown', statusCode: response.statusCode);
+      throw _exceptionFrom(response);
     }
   }
 
@@ -317,6 +313,13 @@ class AuthService {
     await _storage.clear();
     _current = null;
   }
+
+  // エラーのレスポンスをAuthExceptionにする。429(too_many_requests)なら待つ秒数(Retry-After)も入れる
+  AuthException _exceptionFrom(http.Response response) => AuthException(
+    _errorCode(response) ?? 'unknown',
+    statusCode: response.statusCode,
+    retryAfterSeconds: int.tryParse(response.headers['retry-after'] ?? ''),
+  );
 
   String? _errorCode(http.Response response) {
     try {

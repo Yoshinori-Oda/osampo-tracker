@@ -94,6 +94,14 @@ void main() {
     (const AuthException('account_disabled', statusCode: 403), 'このアカウントは停止されています'),
     (const AuthException(AuthException.network), 'サーバーに接続できませんでした。通信環境を確認してください'),
     (const AuthException('internal_error', statusCode: 500), 'ログインできませんでした(internal_error)'),
+    (
+      const AuthException('too_many_requests', statusCode: 429, retryAfterSeconds: 541),
+      'ログインの試行回数が上限に達しました。10分後にもう一度試してください',
+    ),
+    (
+      const AuthException('too_many_requests', statusCode: 429),
+      'ログインの試行回数が上限に達しました。しばらくしてからもう一度試してください',
+    ),
   ]) {
     testWidgets('エラー(${error.code})のメッセージを出し、画面に留まる', (tester) async {
       final fake = _FakeAuthController(error: error);

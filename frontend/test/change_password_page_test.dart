@@ -104,4 +104,16 @@ void main() {
 
     expect(find.text('サーバーに接続できませんでした。通信環境を確認してください'), findsOneWidget);
   });
+
+  testWidgets('試行回数の上限(429)なら、いつ試せるかを画面に出す', (tester) async {
+    final fake = _FakeAuthController(
+      result: const AuthException('too_many_requests', statusCode: 429, retryAfterSeconds: 900),
+    );
+    await _open(tester, fake);
+
+    await _fillAndSubmit(tester, 'old-password', 'new-password', 'new-password');
+
+    expect(find.text('現在のパスワードの入力の回数が上限に達しました。15分後にもう一度試してください'), findsOneWidget);
+    expect(find.byType(ChangePasswordPage), findsOneWidget);
+  });
 }

@@ -130,6 +130,21 @@ void main() {
       expect(await db.getUser(_userId), isNull);
     });
 
+    test('試行回数の上限(429)はRetry-Afterの秒数をAuthExceptionに入れる', () async {
+      final service = createService((_) async => http.Response(
+        jsonEncode({'code': 'too_many_requests', 'message': 'too_many_requests'}),
+        429,
+        headers: {'content-type': 'application/json', 'retry-after': '600'},
+      ));
+
+      await expectLater(
+        service.login(email: 'test@example.com', password: 'password'),
+        throwsA(isA<AuthException>()
+          .having((e) => e.code, 'code', 'too_many_requests')
+          .having((e) => e.retryAfterSeconds, 'retryAfterSeconds', 600)),
+      );
+    });
+
     test('通信できなければnetworkのAuthExceptionを投げる', () async {
       final service = createService((_) async => throw http.ClientException('offline'));
 
@@ -418,6 +433,24 @@ void main() {
         throwsA(isA<AuthException>().having((e) => e.code, 'code', 'invalid_current_password')),
       );
       // 401ではないので、ログイン状態は無効にならない
+      expect(storage.stored, isNotNull);
+    });
+
+    test('現在のパスワードの試行回数の上限(429)はRetry-Afterの秒数をAuthExceptionに入れる', () async {
+      final service = createService((_) async => http.Response('', 500));
+      await signIn(service);
+      final client = clientReturning(service, http.Response(
+        jsonEncode({'code': 'too_many_requests', 'message': 'too_many_requests'}),
+        429,
+        headers: {'content-type': 'application/json', 'retry-after': '900'},
+      ));
+
+      await expectLater(
+        service.changePassword(client, currentPassword: 'old-password', newPassword: 'new-password'),
+        throwsA(isA<AuthException>()
+          .having((e) => e.code, 'code', 'too_many_requests')
+          .having((e) => e.retryAfterSeconds, 'retryAfterSeconds', 900)),
+      );
       expect(storage.stored, isNotNull);
     });
 

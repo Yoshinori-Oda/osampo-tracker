@@ -2,9 +2,16 @@ import '../../auth/auth_service.dart';
 
 // APIのエラー(code)を画面に出すメッセージにする。codeの一覧はbackend/docs/API設計ドラフト.md
 
+// 試行回数の上限(429)のときの「いつ試せるか」。Retry-Afterが無ければ「しばらくしてから」にする
+String _retryLater(AuthException e) {
+  final seconds = e.retryAfterSeconds;
+  return seconds == null ? 'しばらくしてから' : '${(seconds / 60).ceil()}分後に';
+}
+
 String loginErrorMessage(AuthException e) => switch (e.code) {
   'invalid_credentials' => 'メールアドレスまたはパスワードが違います',
   'account_disabled' => 'このアカウントは停止されています',
+  'too_many_requests' => 'ログインの試行回数が上限に達しました。${_retryLater(e)}もう一度試してください',
   AuthException.network => 'サーバーに接続できませんでした。通信環境を確認してください',
   _ => 'ログインできませんでした(${e.code})',
 };
@@ -18,6 +25,7 @@ String signupErrorMessage(AuthException e) => switch (e.code) {
 
 String changePasswordErrorMessage(AuthException e) => switch (e.code) {
   'invalid_current_password' => '現在のパスワードが違います',
+  'too_many_requests' => '現在のパスワードの入力の回数が上限に達しました。${_retryLater(e)}もう一度試してください',
   'validation_error' => '新しいパスワードは8〜128文字にしてください',
   'unauthenticated' || 'token_expired' => 'ログインの有効期限が切れています。ログインし直してください',
   AuthException.network => 'サーバーに接続できませんでした。通信環境を確認してください',
