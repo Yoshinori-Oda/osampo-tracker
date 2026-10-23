@@ -34,13 +34,16 @@ class _Home extends StatefulWidget {
   const _Home(this.userId);
 
   @override
-  State<_Home> createState() {
-    created++;
-    return _HomeState();
-  }
+  State<_Home> createState() => _HomeState();
 }
 
 class _HomeState extends State<_Home> {
+  @override
+  void initState() {
+    super.initState();
+    _Home.created++;
+  }
+
   @override
   Widget build(BuildContext context) => Text('home: ${widget.userId}');
 }
