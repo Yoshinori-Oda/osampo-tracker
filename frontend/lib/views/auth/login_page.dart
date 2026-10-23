@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../auth/auth_service.dart';
 import '../../providers/auth_providers.dart';
+import '../../utils/app_log.dart';
 import 'auth_error_messages.dart';
 import 'signup_page.dart';
 
@@ -48,7 +49,7 @@ class _LoginPageState extends ConsumerState<LoginPage> {
       setState(() => _errorMessage = loginErrorMessage(e));
     } catch (e) {
       // 通信以外の失敗(端末の保存領域に書けない・レスポンスの形式が違う等)も、画面に出して止まらないようにする
-      print('[auth] unexpected error: $e');
+      appLog('auth', 'unexpected error', error: e);
       if (mounted) setState(() => _errorMessage = '予期しないエラーが発生しました($e)');
     } finally {
       if (mounted) setState(() => _submitting = false);

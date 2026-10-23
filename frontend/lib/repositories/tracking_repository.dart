@@ -4,6 +4,7 @@ import 'dart:io';
 import 'package:http/http.dart' as http;
 import 'package:uuid/uuid.dart';
 import '../database/app_database.dart';
+import '../utils/app_log.dart';
 import '../models/recording_session.dart';
 import '../models/status.dart';
 import '../models/move_method.dart';
@@ -154,13 +155,13 @@ class TrackingRepository {
   Future<bool> syncDiff() async {
     if (!_canSync()) return false;
     bool isSucceeded = false;
-    print('[sync] start syncing');
+    appLog('sync', 'start syncing');
     try {
       isSyncing = true;
 
       // push all unsynced sessions
       final pushResult = await pushUnsyncedSessions();
-      print('[sync] push result: ${pushResult.outcome}');
+      appLog('sync', 'push result: ${pushResult.outcome}');
 
       // 他端末で削除済みのセッションを編集していた場合はダイアログ等で解決してからpullへ進む
       if (pushResult.outcome == PushOutcome.conflict) {
@@ -175,20 +176,19 @@ class TrackingRepository {
 
       // pull remote data to local
       isSucceeded = await fetchRemoteSessions();
-      print(isSucceeded ? '[sync] pull succeeded' : '[sync] pull failed');
+      appLog('sync', isSucceeded ? 'pull succeeded' : 'pull failed');
     } on TimeoutException {
       // do nothing if timeouted
-      print('[sync] sync failed by timeout');
+      appLog('sync', 'sync failed by timeout');
     } on SocketException {
       // do nothing if no connection
-      print('[sync] sync failed by socket');
+      appLog('sync', 'sync failed by socket');
     } catch (e, stackTrace) {
       // do nothing if error occured
-      print('[sync] sync failed by $e');
-      print(stackTrace);
+      appLog('sync', 'sync failed', error: e, stackTrace: stackTrace);
     } finally {
       isSyncing = false;
-      print('[sync] sync ended');
+      appLog('sync', 'sync ended');
     }
     return isSucceeded;
   }
@@ -470,8 +470,10 @@ class TrackingRepository {
   }
 
   void _logFailure(String action, Session? session, http.Response response) {
-    print('[sync] $action failed: ${response.statusCode} ${_errorCode(response) ?? ''} '
-      '${session == null ? '' : '(session ${session.id})'}');
+    // サーバーのログと突き合わせられるよう、リクエストIDも出す
+    appLog('sync', '$action failed: ${response.statusCode} ${_errorCode(response) ?? ''} '
+      '${session == null ? '' : '(session ${session.id}) '}'
+      'request_id=${response.headers['x-request-id']}');
   }
 
   // for tracking service

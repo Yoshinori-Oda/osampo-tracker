@@ -1,6 +1,7 @@
 import 'dart:convert';
 import 'package:http/http.dart' as http;
 import 'auth_service.dart';
+import 'request_id_client.dart';
 
 /// リクエストにアクセストークン(Authorization: Bearer)を付けるHTTPクライアント。
 /// - 401(token_expired): リフレッシュトークンでトークンを更新し、元のリクエストを1回だけやり直す
@@ -16,7 +17,7 @@ class AuthorizedClient extends http.BaseClient {
   final void Function()? onEmailNotVerified;
 
   AuthorizedClient(this._auth, {http.Client? inner, this.onAuthInvalid, this.onEmailNotVerified})
-    : _inner = inner ?? http.Client();
+    : _inner = inner ?? RequestIdClient();
 
   @override
   Future<http.StreamedResponse> send(http.BaseRequest request) async {

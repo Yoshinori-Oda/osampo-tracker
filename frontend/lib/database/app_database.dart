@@ -9,6 +9,7 @@ import 'package:path/path.dart' as p;
 import '../models/recording_session.dart';
 import '../models/status.dart';
 import '../models/move_method.dart';
+import '../utils/app_log.dart';
 
 part 'app_database.g.dart';
 
@@ -434,7 +435,7 @@ LazyDatabase _openConnection() {
   return LazyDatabase(() async {
     final dbFolder = await getApplicationDocumentsDirectory();
     final file = File(p.join(dbFolder.path, 'app.sqlite'));
-    print('SQLite DB Path: ${file.path}');
+    appLog('db', 'SQLite DB Path: ${file.path}');
     return NativeDatabase.createInBackground(file);
   });
 }

@@ -164,7 +164,7 @@ Claude Code がこのプロジェクトで作業する際のコンテキスト�
   `analyze test`。指定順に関わらずpubget→codegen→analyze→test→e2eの順に1回ずつ実行し、
   途中で失敗しても残りのstepは実行する。`test`は`-t <path>`(複数可)で対象を絞れる
   (省略すると`test/`配下を全件実行する)。`analyze`は`--no-fatal-infos`で
-  実行するため既知のinfo(`avoid_print`)だけではFAILEDにならないが、指摘は全件記録する
+  実行するためinfoだけではFAILEDにならないが、指摘は全件記録する
 - 結果は`frontend/host_check_logs/<timestamp>_<run_id>_<PASSED|FAILED>/`に保存される
   (`.gitignore`済み):
   - `SUMMARY.md`: 実行環境(ブランチ/コミット/未コミット変更の有無/ホストのFlutterバージョン)、
@@ -235,7 +235,10 @@ Claude Code がこのプロジェクトで作業する際のコンテキスト�
 
 ## デバッグ Tips
 
-- 同期の流れは`print`ベースのログ(`[sync] ...`)で追える。`avoid_print`のlint infoは既知で許容している
+- 端末のログは`utils/app_log.dart`の`appLog`で出す(`[sync] ...`・`[auth] ...`・`[http] ...`。リリースビルドでは出さない)。`print`は使わない。
+  通信は`[http]`の行にリクエストID(`X-Request-ID`)が出るので、backendのログ(`docker compose logs api | grep <ID>`)と突き合わせられる
+- backendのログは`docker compose logs api`・`docker compose logs worker`で見る(key=value。`LOG_FORMAT=json`でJSON)。
+  3つのログ(アクセス・アプリ・監査)の役割は`backend/docs/バックエンド構成.md`の「ログ」
 - 複数端末での同期テストは、複数のシミュレータ/実機で同じユーザー(`app.cli seed-dev`のテストユーザー
   `testuser@example.com`等)にログインして行う。同期はメールアドレスが確認済みのユーザーでしか行われない
 

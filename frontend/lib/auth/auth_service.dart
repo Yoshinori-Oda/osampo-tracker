@@ -3,7 +3,9 @@ import 'dart:convert';
 import 'package:http/http.dart' as http;
 import '../database/app_database.dart';
 import '../repositories/tracking_repository.dart';
+import '../utils/app_log.dart';
 import 'auth_storage.dart';
+import 'request_id_client.dart';
 
 // APIが返したエラー(レスポンスbodyのcode)。画面で表示を分けるのに使う
 class AuthException implements Exception {
@@ -59,7 +61,7 @@ class AuthService {
   };
 
   AuthService(this._db, this._storage, {http.Client? client, String? baseUrl})
-    : _client = client ?? http.Client(),
+    : _client = client ?? RequestIdClient(),
       _baseUrl = baseUrl ?? TrackingRepository.defaultBaseUrl;
 
   String? get userId => _current?.userId;
@@ -92,7 +94,7 @@ class AuthService {
         .timeout(_timeoutDuration);
     } catch (e) {
       // 接続先の誤り(実機・Androidエミュレータのlocalhost)・平文HTTPの禁止・タイムアウト等を見分けるため、原因を出す
-      print('[auth] $path failed: $e ($_baseUrl)');
+      appLog('auth', '$path failed ($_baseUrl)', error: e);
       throw const AuthException(AuthException.network);
     }
     if (response.statusCode ~/ 100 != 2) {
@@ -141,7 +143,7 @@ class AuthService {
         )
         .timeout(_timeoutDuration);
     } catch (e) {
-      print('[auth] /auth/refresh failed: $e');
+      appLog('auth', '/auth/refresh failed', error: e);
       return RefreshOutcome.failed;
     }
     if (response.statusCode == 200) {
