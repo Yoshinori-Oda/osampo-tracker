@@ -175,11 +175,54 @@ void main() {
     test('ログアウトはサーバーが失敗してもトークンを消し、ローカルのデータは残す', () async {
       final service = createService((_) async => throw http.ClientException('offline'));
       await signIn(service);
+      final apiRequests = <http.Request>[];
+      final client = AuthorizedClient(service, inner: MockClient((request) async {
+        apiRequests.add(request);
+        throw http.ClientException('offline');
+      }));
 
-      await service.logout();
+      await service.logout(client);
 
-      expect(requests.single.url.path, '/api/auth/logout');
-      expect(requests.single.headers['Authorization'], 'Bearer access-0');
+      expect(apiRequests.single.url.path, '/api/auth/logout');
+      expect(apiRequests.single.headers['Authorization'], 'Bearer access-0');
+      expect(storage.stored, isNull);
+      expect(service.userId, isNull);
+      expect(await db.getUser(_userId), isNotNull);
+    });
+
+    test('アクセストークンが期限切れなら、トークンを更新してからログアウトし、トークンを消す', () async {
+      final service = createService((_) async => _json(200, _tokens('2')));
+      await signIn(service);
+      final apiRequests = <http.Request>[];
+      final client = AuthorizedClient(service, inner: MockClient((request) async {
+        apiRequests.add(request);
+        return request.headers['Authorization'] == 'Bearer access-2'
+          ? http.Response('', 204)
+          : _error(401, 'token_expired');
+      }));
+
+      await service.logout(client);
+
+      expect(requests.single.url.path, '/api/auth/refresh');
+      expect(apiRequests.map((r) => r.url.path), ['/api/auth/logout', '/api/auth/logout']);
+      expect(apiRequests.map((r) => r.headers['Authorization']), ['Bearer access-0', 'Bearer access-2']);
+      expect(storage.stored, isNull);
+      expect(service.userId, isNull);
+    });
+
+    test('トークンの更新も拒否されたら(サーバーのログイン状態は無効)、送り直さずにトークンを消す', () async {
+      final service = createService((_) async => _error(401, 'invalid_refresh_token'));
+      await signIn(service);
+      final apiRequests = <http.Request>[];
+      final client = AuthorizedClient(service, inner: MockClient((request) async {
+        apiRequests.add(request);
+        return _error(401, 'token_expired');
+      }));
+
+      await service.logout(client);
+
+      expect(requests.single.url.path, '/api/auth/refresh');
+      expect(apiRequests, hasLength(1));
       expect(storage.stored, isNull);
       expect(service.userId, isNull);
       expect(await db.getUser(_userId), isNotNull);
