@@ -9,7 +9,7 @@ from datetime import timedelta
 from sqlalchemy import delete, func
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models import AuthSession, OutboxEmail, RefreshToken, TrackingSession
+from app.models import AuditEvent, AuthSession, OutboxEmail, RefreshToken, TrackingSession
 from app.models.outbox_email import OUTBOX_CANCELLED, OUTBOX_FAILED, OUTBOX_SENT
 
 
@@ -53,6 +53,17 @@ async def purge_old_outbox_emails(db: AsyncSession, retention_days: int) -> int:
         delete(OutboxEmail).where(
             OutboxEmail.status.in_([OUTBOX_SENT, OUTBOX_FAILED, OUTBOX_CANCELLED]),
             OutboxEmail.created_at < func.clock_timestamp() - timedelta(days=retention_days),
+        )
+    )
+    await db.commit()
+    return result.rowcount
+
+
+async def purge_old_audit_events(db: AsyncSession, retention_days: int) -> int:
+    """記録してから保持期間(既定90日)を過ぎた監査ログを物理削除し、削除した件数を返す。"""
+    result = await db.execute(
+        delete(AuditEvent).where(
+            AuditEvent.occurred_at < func.clock_timestamp() - timedelta(days=retention_days)
         )
     )
     await db.commit()

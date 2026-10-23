@@ -138,5 +138,7 @@ async def confirm_email_verification(
     同じコードで5回間違えるとそのコードは使えなくなる(以降は`verification_code_expired`。再送する)。
     確認済みなら、コードに関係なく200(確認に成功したのにレスポンスが届かず再送した場合のため)。
     """
-    user = await email_verification_service.confirm_verification_code(db, auth.user, body.code)
+    user = await email_verification_service.confirm_verification_code(
+        db, auth.user, body.code, device_id=auth.device_id
+    )
     return auth_service.user_response(user)

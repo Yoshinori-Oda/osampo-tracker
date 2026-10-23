@@ -3,6 +3,7 @@ from fastapi.routing import APIRoute
 
 from app.config import settings
 from app.error_handlers import install_error_handling
+from app.request_context import RequestContextMiddleware
 from app.routers import auth, health, sessions, users
 
 DESCRIPTION = """
@@ -32,6 +33,8 @@ app = FastAPI(
 
 # エラーを共通の形式({"code", "message", "details"})で返す例外ハンドラーと、bodyのサイズの上限
 install_error_handling(app, max_body_bytes=settings.max_request_body_bytes)
+# 監査ログに残す送信元のIPを、サービスの処理から参照できるようにする
+app.add_middleware(RequestContextMiddleware)
 
 # /healthは運用(composeのhealthcheck)用なので、APIのパス(/api/...)の外に置く
 app.include_router(health.router)

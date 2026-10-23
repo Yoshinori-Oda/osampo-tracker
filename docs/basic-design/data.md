@@ -103,7 +103,21 @@ erDiagram
         timestamptz send_deadline
         timestamptz created_at
     }
+
+    audit_events {
+        bigint id PK
+        timestamptz occurred_at
+        varchar event_type
+        varchar reason
+        uuid user_id "外部キーなし"
+        varchar email
+        uuid device_id
+        inet ip
+        uuid target_user_id
+    }
 ```
+
+`audit_events`は他のテーブルと外部キーで結ばない(アカウントの削除の記録を、ユーザーを消した後も残すため)。
 
 ### テーブル一覧
 
@@ -115,6 +129,7 @@ erDiagram
 | `auth_sessions` | 端末ごとのログイン状態(1回のログインで1行) | 同じユーザー・同じ端末の有効な行は1つだけ(部分一意インデックス)。`revoked_at`を入れると、その端末のトークンは全て使えなくなる |
 | `refresh_tokens` | リフレッシュトークン(更新のたびに1行) | トークンそのものは持たずSHA-256だけ。使用済み(`used_at`)の行は、再使用の検知のため有効期限まで残す |
 | `email_codes` | メールで送る確認コード(ユーザーと用途ごとに1行) | コードはargon2のハッシュだけ。間違えた回数・24時間の送信回数をここで数える。用途は今は`verify_email`だけ |
+| `audit_events` | 監査ログ(認証・アカウント・権限の出来事) | 追記のみ。正常な流れでも頻繁に起きる失敗(トークンの期限切れ・メール未確認の403等)は残さない。詳細は`backend/docs/バックエンド構成.md`の「監査ログ」 |
 | `outbox_emails` | 送信待ちのメールと送信の記録 | apiは業務のデータと同じトランザクションで積むだけで、送るのはworker。送信に成功したら本文を消す(確認コードが平文で入るため) |
 
 外部キーは全て`ON DELETE CASCADE`にしている(`email_codes.outbox_email_id`だけ`SET NULL`)。アカウントを削除すると、そのユーザーの
@@ -261,5 +276,6 @@ stateDiagram-v2
 | リフレッシュトークン | 有効期限(30日)まで | 期限を過ぎたものをworkerが物理削除する |
 | 無効にしたログイン状態(`auth_sessions.revoked_at`が入った行) | 無効にしてから30日 | workerが物理削除する |
 | メールの送信の記録(`outbox_emails`) | 送信済み(`sent`)・諦めた(`failed`)・取り消した(`cancelled`)行は作成から90日(`OUTBOX_RETENTION_DAYS`) | workerが物理削除する。本文は送信に成功した時点で消す。送信待ち(`pending`)の行は消さない |
-| ユーザーと、その全てのデータ | アカウントを削除するまで | アカウントの削除で、サーバー・端末とも物理削除する |
+| 監査ログ(`audit_events`) | 記録から90日(`AUDIT_EVENT_RETENTION_DAYS`) | workerが物理削除する |
+| ユーザーと、その全てのデータ | アカウントを削除するまで | アカウントの削除で、サーバー・端末とも物理削除する。監査ログもそのユーザーの記録を消し、削除の記録(日時と`user_id`だけ)を残す |
 | 端末の`deletedUnsynced`の行 | サーバーでの削除が確認できるまで | 削除(DELETE)の成功、またはサーバーに無いことの確認で物理削除する |

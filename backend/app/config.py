@@ -51,6 +51,8 @@ class Settings(BaseSettings):
     mail_poll_interval_seconds: int = 5
     mail_max_attempts: int = 5
     outbox_retention_days: int = 90
+    # 監査ログ(audit_events)を残す日数。アカウントの削除の記録も含めて、これを過ぎたら消す
+    audit_event_retention_days: int = 90
 
     # メールアドレスの確認コード(6桁): 有効期限、1つのコードで間違えてよい回数、再送の間隔、24時間あたりの送信回数の上限
     email_code_ttl_minutes: int = 10

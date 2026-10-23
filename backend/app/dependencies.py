@@ -9,7 +9,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db import get_session
 from app.errors import AppError, ErrorCode
-from app.services import auth_service, session_service
+from app.models.audit_event import EVENT_ACCESS_DENIED, EVENT_ADMIN_USER_ACCESS
+from app.services import audit_service, auth_service, session_service
 from app.services.auth_service import AuthContext
 
 DbSession = Annotated[AsyncSession, Depends(get_session)]
@@ -63,15 +64,25 @@ async def verify_user_access(user_id: uuid.UUID, auth: CurrentAuth, db: DbSessio
 
     API設計書の「認証と権限」の順に判定する: 401(get_auth_context) → 403(forbidden) → 403(email_not_verified)
     → 404(user_not_found)。一般ユーザーは自分以外のuser_idを指定すると403で止まるので、他ユーザーの有無は分からない。
+    他人のデータへのアクセスの拒否と、管理者による他のユーザーのデータへのアクセスは監査ログに残す(GETはcommitしないので、
+    ここでcommitする)。
     """
     me = auth.user
     if not me.is_admin and me.id != user_id:
+        audit_service.record(
+            db, EVENT_ACCESS_DENIED, user_id=me.id, device_id=auth.device_id, target_user_id=user_id
+        )
+        await db.commit()
         raise AppError(403, ErrorCode.FORBIDDEN, "この操作の権限がありません")
     if not me.email_verified:
         raise AppError(403, ErrorCode.EMAIL_NOT_VERIFIED, "メールアドレスを確認すると同期できます")
     if me.id != user_id:
         # 管理者が他ユーザーを指定した場合だけ、そのユーザーの存在を確認する
         await session_service.ensure_user_exists(db, user_id)
+        audit_service.record(
+            db, EVENT_ADMIN_USER_ACCESS, user_id=me.id, device_id=auth.device_id, target_user_id=user_id
+        )
+        await db.commit()
     return user_id
 
 

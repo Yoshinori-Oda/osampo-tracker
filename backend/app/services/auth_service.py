@@ -15,6 +15,17 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app import security
 from app.errors import AppError, ErrorCode
 from app.models import AuthSession, RefreshToken, User
+from app.models.audit_event import (
+    EVENT_ACCOUNT_DISABLED,
+    EVENT_ACCOUNT_ENABLED,
+    EVENT_LOGIN_FAILED,
+    EVENT_LOGIN_SUCCEEDED,
+    EVENT_LOGOUT,
+    EVENT_PASSWORD_CHANGE_FAILED,
+    EVENT_PASSWORD_CHANGED,
+    EVENT_REFRESH_TOKEN_REUSED,
+    EVENT_SIGNUP,
+)
 from app.schemas.auth import (
     ChangePasswordRequest,
     LoginRequest,
@@ -23,17 +34,18 @@ from app.schemas.auth import (
     UpdateMeRequest,
     UserResponse,
 )
-from app.services import mail_service
+from app.services import audit_service, mail_service
 from app.services.email_verification_service import issue_verification_code
 from app.services.session_service import current_time
 
 
 @dataclass(frozen=True)
 class AuthContext:
-    """アクセストークンで認証されたユーザーと、その端末のログイン状態のID(sid)。"""
+    """アクセストークンで認証されたユーザーと、その端末のログイン状態のID(sid)・端末ID。"""
 
     user: User
     auth_session_id: uuid.UUID
+    device_id: uuid.UUID
 
 
 def _unauthenticated() -> AppError:
@@ -78,6 +90,7 @@ async def signup(db: AsyncSession, body: SignupRequest) -> TokenResponse:
     # メールアドレスの確認コードを、ユーザーの作成と同じトランザクションで送る(outboxに積む)
     await issue_verification_code(db, user)
     tokens = await _start_auth_session(db, user, body.device_id, body.device_name)
+    audit_service.record(db, EVENT_SIGNUP, user_id=user.id, email=email, device_id=body.device_id)
     await db.commit()
     return tokens
 
@@ -87,17 +100,38 @@ def _email_already_registered() -> AppError:
 
 
 async def login(db: AsyncSession, body: LoginRequest) -> TokenResponse:
-    user = await db.scalar(select(User).where(User.email == body.email.lower()))
+    email = body.email.lower()
+    user = await db.scalar(select(User).where(User.email == email))
     # ユーザーが無い場合もダミーのハッシュで検証する(応答時間でユーザーの有無を区別できないようにする)
     password_ok = security.verify_password(body.password, user.password_hash if user else None)
     if user is None or not password_ok:
+        await _record_login_failed(db, body, user, ErrorCode.INVALID_CREDENTIALS)
         raise AppError(401, ErrorCode.INVALID_CREDENTIALS, "メールアドレスまたはパスワードが違います")
     if user.disabled_at is not None:
+        await _record_login_failed(db, body, user, ErrorCode.ACCOUNT_DISABLED)
         raise AppError(403, ErrorCode.ACCOUNT_DISABLED, "アカウントが停止されています")
 
     tokens = await _start_auth_session(db, user, body.device_id, body.device_name)
+    audit_service.record(
+        db, EVENT_LOGIN_SUCCEEDED, user_id=user.id, email=email, device_id=body.device_id
+    )
     await db.commit()
     return tokens
+
+
+async def _record_login_failed(
+    db: AsyncSession, body: LoginRequest, user: User | None, reason: ErrorCode
+) -> None:
+    """ログインの失敗を監査ログに残してcommitする(この後にエラーを投げるとロールバックされるため)。"""
+    audit_service.record(
+        db,
+        EVENT_LOGIN_FAILED,
+        user_id=user.id if user else None,
+        email=body.email,
+        device_id=body.device_id,
+        reason=reason,
+    )
+    await db.commit()
 
 
 async def _start_auth_session(
@@ -170,7 +204,13 @@ async def refresh(db: AsyncSession, refresh_token: str) -> TokenResponse:
         # (アカウントはロックしない。圏外でレスポンスが届かずに再試行した正しい利用者でも起きるため)
         if auth_session.revoked_at is None:
             auth_session.revoked_at = now
-            await db.commit()
+        audit_service.record(
+            db,
+            EVENT_REFRESH_TOKEN_REUSED,
+            user_id=auth_session.user_id,
+            device_id=auth_session.device_id,
+        )
+        await db.commit()
         raise _invalid_refresh_token()
 
     if token.expires_at <= now or auth_session.revoked_at is not None:
@@ -194,6 +234,7 @@ async def logout(db: AsyncSession, auth: AuthContext) -> None:
         .where(AuthSession.id == auth.auth_session_id, AuthSession.revoked_at.is_(None))
         .values(revoked_at=now)
     )
+    audit_service.record(db, EVENT_LOGOUT, user_id=auth.user.id, device_id=auth.device_id)
     await db.commit()
 
 
@@ -230,7 +271,9 @@ async def authenticate(db: AsyncSession, access_token: str) -> AuthContext:
     user, auth_session = row
     if auth_session.revoked_at is not None or user.disabled_at is not None:
         raise _unauthenticated()
-    return AuthContext(user=user, auth_session_id=auth_session_id)
+    return AuthContext(
+        user=user, auth_session_id=auth_session_id, device_id=auth_session.device_id
+    )
 
 
 # ---- 自分のアカウント ----------------------------------------------------------------
@@ -258,6 +301,10 @@ async def change_password(db: AsyncSession, auth: AuthContext, body: ChangePassw
     """
     user = auth.user
     if not security.verify_password(body.current_password, user.password_hash):
+        audit_service.record(
+            db, EVENT_PASSWORD_CHANGE_FAILED, user_id=user.id, email=user.email, device_id=auth.device_id
+        )
+        await db.commit()
         raise AppError(400, ErrorCode.INVALID_CURRENT_PASSWORD, "現在のパスワードが違います")
 
     now = await current_time(db)
@@ -279,12 +326,17 @@ async def change_password(db: AsyncSession, auth: AuthContext, body: ChangePassw
         body=PASSWORD_CHANGED_BODY,
         recipient_user_id=user.id,
     )
+    audit_service.record(
+        db, EVENT_PASSWORD_CHANGED, user_id=user.id, email=user.email, device_id=auth.device_id
+    )
     await db.commit()
 
 
 async def delete_me(db: AsyncSession, user: User) -> None:
     """アカウントを物理削除する。外部キーのON DELETE CASCADEで、sessions・track_points・端末のログイン状態・
-    リフレッシュトークンも一緒に消える(tombstoneは残さない)。"""
+    リフレッシュトークンも一緒に消える(tombstoneは残さない)。監査ログはそのユーザーの記録を消し、削除の記録
+    (日時とuser_id)だけを残す。"""
+    await audit_service.record_account_deleted(db, user.id)
     await db.delete(user)
     await db.commit()
 
@@ -309,5 +361,11 @@ async def set_user_disabled(db: AsyncSession, email: str, disabled: bool) -> Use
     else:
         user.disabled_at = None
     user.updated_at = now
+    audit_service.record(
+        db,
+        EVENT_ACCOUNT_DISABLED if disabled else EVENT_ACCOUNT_ENABLED,
+        user_id=user.id,
+        email=user.email,
+    )
     await db.commit()
     return user

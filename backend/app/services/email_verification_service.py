@@ -5,6 +5,7 @@
 """
 
 import math
+import uuid
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 
@@ -16,8 +17,9 @@ from app import security
 from app.config import settings
 from app.errors import AppError, ErrorCode
 from app.models import EmailCode, User
+from app.models.audit_event import EVENT_EMAIL_VERIFIED
 from app.models.email_code import CODE_LOCKED, CODE_PENDING, CODE_USED, PURPOSE_VERIFY_EMAIL
-from app.services import mail_service
+from app.services import audit_service, mail_service
 from app.services.session_service import current_time
 
 SEND_WINDOW = timedelta(hours=24)
@@ -148,7 +150,9 @@ def _code_expired() -> AppError:
     )
 
 
-async def confirm_verification_code(db: AsyncSession, user: User, code: str) -> User:
+async def confirm_verification_code(
+    db: AsyncSession, user: User, code: str, device_id: uuid.UUID | None = None
+) -> User:
     """確認コードを照合し、合っていればメールアドレスを確認済みにする。
 
     確認済みなら、コードを見ずにそのまま返す(確認に成功したのにレスポンスが届かず再送された場合に、失敗に見えないようにするため)。
@@ -182,5 +186,8 @@ async def confirm_verification_code(db: AsyncSession, user: User, code: str) -> 
     row.expires_at = None
     user.email_verified_at = now
     user.updated_at = now
+    audit_service.record(
+        db, EVENT_EMAIL_VERIFIED, user_id=user.id, email=user.email, device_id=device_id
+    )
     await db.commit()
     return user

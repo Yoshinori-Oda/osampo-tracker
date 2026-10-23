@@ -7,12 +7,21 @@ from geoalchemy2 import WKTElement
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models import AuthSession, OutboxEmail, RefreshToken, TrackingSession, TrackPoint, User
+from app.models import (
+    AuditEvent,
+    AuthSession,
+    OutboxEmail,
+    RefreshToken,
+    TrackingSession,
+    TrackPoint,
+    User,
+)
 from app.models.outbox_email import OUTBOX_CANCELLED, OUTBOX_FAILED, OUTBOX_PENDING, OUTBOX_SENT
 from app.services.mail_service import enqueue_email
 from app.services.purge_service import (
     purge_expired_auth,
     purge_expired_tombstones,
+    purge_old_audit_events,
     purge_old_outbox_emails,
 )
 
@@ -136,3 +145,19 @@ async def test_purges_only_old_completed_outbox_emails(db_session: AsyncSession)
     assert purged == 3
     remaining = set(await db_session.scalars(select(OutboxEmail.subject)))
     assert remaining == {"新しい送信済み", "新しい取り消した", "古い送信待ち"}
+
+
+async def test_purges_only_audit_events_older_than_retention(db_session: AsyncSession):
+    now = datetime.now(UTC)
+    for reason, age_days in [("古い", RETENTION_DAYS + 1), ("新しい", RETENTION_DAYS - 1)]:
+        db_session.add(
+            AuditEvent(
+                event_type="login_failed", reason=reason, occurred_at=now - timedelta(days=age_days)
+            )
+        )
+    await db_session.flush()
+
+    purged = await purge_old_audit_events(db_session, RETENTION_DAYS)
+
+    assert purged == 1
+    assert set(await db_session.scalars(select(AuditEvent.reason))) == {"新しい"}

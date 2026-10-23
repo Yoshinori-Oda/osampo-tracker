@@ -17,6 +17,7 @@ from app.services.mail_service import send_pending_emails
 from app.services.purge_service import (
     purge_expired_auth,
     purge_expired_tombstones,
+    purge_old_audit_events,
     purge_old_outbox_emails,
 )
 
@@ -25,7 +26,7 @@ logger = logging.getLogger(__name__)
 
 async def purge_job() -> None:
     """パージ期間を過ぎたtombstoneと、期限切れのリフレッシュトークン・無効にした端末のログイン状態、
-    保持期間を過ぎたメールの送信の記録を物理削除する。
+    保持期間を過ぎたメールの送信の記録・監査ログを物理削除する。
 
     失敗してもworkerは止めず、次の実行で再び試みる。
     """
@@ -34,12 +35,15 @@ async def purge_job() -> None:
             purged = await purge_expired_tombstones(db, settings.purge_retention_days)
             tokens, auth_sessions = await purge_expired_auth(db, settings.refresh_token_ttl_days)
             emails = await purge_old_outbox_emails(db, settings.outbox_retention_days)
+            audit_events = await purge_old_audit_events(db, settings.audit_event_retention_days)
         logger.info(
-            "purged %d expired tombstone(s), %d refresh token(s), %d auth session(s), %d outbox email(s)",
+            "purged %d expired tombstone(s), %d refresh token(s), %d auth session(s), %d outbox email(s), "
+            "%d audit event(s)",
             purged,
             tokens,
             auth_sessions,
             emails,
+            audit_events,
         )
     except Exception:
         logger.exception("failed to purge")
