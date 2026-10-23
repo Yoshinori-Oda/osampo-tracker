@@ -45,7 +45,12 @@ class MyApp extends StatelessWidget {
 // 起動時の画面。ログイン状態を復元する間はスプラッシュ、未ログインならログイン画面、ログイン中ならメイン画面を出す。
 // メイン画面はユーザーごとに作り直す(ユーザーIDをkeyにして、前のユーザーの画面の状態を引き継がない)
 class AuthGate extends ConsumerWidget {
-  const AuthGate({super.key});
+  // ログイン中に出す画面。テストでは、位置情報・地図・同期に依存するMainPageの代わりを渡す
+  final Widget Function(String userId) signedInBuilder;
+
+  const AuthGate({super.key, this.signedInBuilder = _buildMainPage});
+
+  static Widget _buildMainPage(String userId) => const MainPage();
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
@@ -56,6 +61,6 @@ class AuthGate extends ConsumerWidget {
     // 復元に失敗した(端末の保存領域が読めない等)場合も、ログインし直してもらう
     final userId = auth.value?.userId;
     if (userId == null) return const LoginPage();
-    return MainPage(key: ValueKey(userId));
+    return KeyedSubtree(key: ValueKey(userId), child: signedInBuilder(userId));
   }
 }

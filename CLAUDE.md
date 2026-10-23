@@ -163,8 +163,7 @@ Claude Code がこのプロジェクトで作業する際のコンテキスト�
   stepは`pubget`/`codegen`/`analyze`/`test`/`e2e`/`all`(=analyze test e2e)で、省略時は
   `analyze test`。指定順に関わらずpubget→codegen→analyze→test→e2eの順に1回ずつ実行し、
   途中で失敗しても残りのstepは実行する。`test`は`-t <path>`(複数可)で対象を絞れる
-  (`test/widget_test.dart`は`flutter create`の雛形のまま壊れているため、全件実行すると
-  これが失敗する。消すか直すまでは対象を明示すること)。`analyze`は`--no-fatal-infos`で
+  (省略すると`test/`配下を全件実行する)。`analyze`は`--no-fatal-infos`で
   実行するため既知のinfo(`avoid_print`)だけではFAILEDにならないが、指摘は全件記録する
 - 結果は`frontend/host_check_logs/<timestamp>_<run_id>_<PASSED|FAILED>/`に保存される
   (`.gitignore`済み):
