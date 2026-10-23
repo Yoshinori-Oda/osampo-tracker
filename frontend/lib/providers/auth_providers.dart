@@ -114,7 +114,7 @@ class AuthController extends AsyncNotifier<AuthState> {
     _service.updateDisplayName(ref.read(authorizedClientProvider), displayName);
 
   Future<void> logout() async {
-    await _service.logout();
+    await _service.logout(ref.read(authorizedClientProvider));
     state = const AsyncData(AuthState());
   }
 

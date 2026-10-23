@@ -275,16 +275,17 @@ class AuthService {
   }
 
   /// ログアウトする。サーバーでその端末のログイン状態を無効にし(失敗しても続ける)、端末のトークンを消す。
-  /// ローカルのデータはそのユーザーのものとして残す
-  Future<void> logout() async {
-    final current = _current;
-    if (current != null) {
+  /// ローカルのデータはそのユーザーのものとして残す。
+  /// アクセストークンが期限切れなら、AuthorizedClientが更新してから送り直す(API設計ドラフト.mdの「POST /auth/logout」)
+  Future<void> logout(http.Client authorizedClient) async {
+    if (_current != null) {
       try {
-        await _client
-          .post(Uri.parse('$_baseUrl/auth/logout'), headers: {'Authorization': 'Bearer ${current.accessToken}'})
+        await authorizedClient
+          .post(Uri.parse('$_baseUrl/auth/logout'))
           .timeout(_timeoutDuration);
       } catch (_) {
-        // 圏外等でもログアウトは進める(サーバーのログイン状態は、リフレッシュトークンの期限切れで無効になる)
+        // 圏外等でもログアウトは進める(サーバーのログイン状態は、リフレッシュトークンの期限切れで無効になる)。
+        // トークンの更新が拒否された場合は、サーバーのログイン状態は既に無効なので、端末のトークンを消すだけでよい
       }
     }
     await _storage.clear();
