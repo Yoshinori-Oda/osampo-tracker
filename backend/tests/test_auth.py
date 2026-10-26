@@ -11,6 +11,7 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app import security
+from app.db import set_rls_user
 from app.models import AuthSession, TrackingSession, User
 from app.services import auth_service
 
@@ -290,7 +291,7 @@ async def test_update_me_rejects_other_fields(api_client: AsyncClient):
 
 
 async def test_delete_me_deletes_user_and_related_data(
-    api_client: AsyncClient, db_session: AsyncSession, user: User
+    api_client: AsyncClient, db_session: AsyncSession, user: User, admin_user: User
 ):
     register = await api_client.post(
         sessions_url(user.id),
@@ -315,6 +316,8 @@ async def test_delete_me_deletes_user_and_related_data(
 
     assert response.status_code == 204
     assert await db_session.get(User, user.id) is None
+    # RLSで他ユーザーの行は見えないので、全ての行が見える管理者として数える
+    await set_rls_user(db_session, admin_user.id)
     remaining = await db_session.scalar(
         select(func.count()).select_from(TrackingSession).where(TrackingSession.user_id == user.id)
     )

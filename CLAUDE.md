@@ -60,8 +60,8 @@ Claude Code がこのプロジェクトで作業する際のコンテキスト�
   - pyproject.toml・uv.lock: 依存パッケージ(uv)。Dockerfile: api・worker共通のイメージ
   - alembic.ini・migrations/: Alembicのマイグレーション。0001は旧initdb.sqlのスキーマ(とPostgREST用のストアドファンクション)を
     そのまま写したもの、0002は高度関連の3列のdouble precision化、0003はPostgRESTの削除(ストアドファンクションの削除と
-    deleted_atの「削除した日時」への統一)、0004は認証、0005はメールのoutbox、0006はメールアドレスの確認コード、0007は監査ログ、0008は監査ログのリクエストID
-  - db/init/: DBコンテナの初回起動時に実行するスクリプト(ロール・テスト用データベース・拡張機能・権限)
+    deleted_atの「削除した日時」への統一)、0004は認証、0005はメールのoutbox、0006はメールアドレスの確認コード、0007は監査ログ、0008は監査ログのリクエストID、0009はRLSとworker用のロールの権限
+  - db/init/: DBコンテナの初回起動時に実行するスクリプト(ロール(migrator・api・worker)・テスト用データベース・拡張機能・権限)
   - db/seed.sql: 開発用のダミーデータ(テストユーザー`1111...`とセッション)
   - docker-compose.yml: db / api / worker / mailpit。DBの接続情報は`backend/.env`(コミットしない)。
     メールはapiがoutboxに積み、workerがmailpitへ送る(届いたメールは http://localhost:8025 で見る)

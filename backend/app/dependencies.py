@@ -8,7 +8,7 @@ from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app import request_context
-from app.db import get_session
+from app.db import get_session, set_rls_user
 from app.errors import AppError, ErrorCode
 from app.models.audit_event import EVENT_ACCESS_DENIED, EVENT_ADMIN_USER_ACCESS
 from app.services import audit_service, auth_service, session_service
@@ -57,6 +57,8 @@ async def get_auth_context(
     auth = await auth_service.authenticate(db, credentials.credentials)
     # アクセスログ・アプリのログに載せる
     request_context.set_user_id(auth.user.id)
+    # RLSのポリシーに今のユーザーを渡す(以降のトランザクションでも渡し直す)
+    await set_rls_user(db, auth.user.id)
     return auth
 
 

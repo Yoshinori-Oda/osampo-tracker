@@ -20,9 +20,12 @@ class Settings(BaseSettings):
     # pytest専用のデータベース
     postgres_test_db: str = "location_db_test"
 
-    # api・worker用のロール(データの読み書きのみ)
-    app_db_user: str
-    app_db_password: SecretStr
+    # api用のロール(データの読み書きのみ。sessions・track_pointsはRLSで本人の行だけ)。workerには渡さない
+    app_db_user: str | None = None
+    app_db_password: SecretStr | None = None
+    # worker用のロール(ジョブで使うテーブル・操作だけ)。apiでは、マイグレーション(ポリシーの対象のロール名)とpytestで使う
+    worker_db_user: str | None = None
+    worker_db_password: SecretStr | None = None
     # マイグレーション(Alembic)用のロール(テーブルの作成・変更ができる)。workerには渡さない
     migrator_db_user: str | None = None
     migrator_db_password: SecretStr | None = None
@@ -74,14 +77,24 @@ class Settings(BaseSettings):
 
     @property
     def app_database_url(self) -> URL:
-        return self._database_url(self.app_db_user, self.app_db_password, self.postgres_db)
+        return self._database_url(self.app_db_user, self.app_db_password, self.postgres_db, "APP_DB")
+
+    @property
+    def worker_database_url(self) -> URL:
+        return self._database_url(
+            self.worker_db_user, self.worker_db_password, self.postgres_db, "WORKER_DB"
+        )
 
     def migrator_database_url(self, database: str) -> URL:
-        if self.migrator_db_user is None or self.migrator_db_password is None:
-            raise RuntimeError("MIGRATOR_DB_USER / MIGRATOR_DB_PASSWORD が設定されていません")
-        return self._database_url(self.migrator_db_user, self.migrator_db_password, database)
+        return self._database_url(
+            self.migrator_db_user, self.migrator_db_password, database, "MIGRATOR_DB"
+        )
 
-    def _database_url(self, user: str, password: SecretStr, database: str) -> URL:
+    def _database_url(
+        self, user: str | None, password: SecretStr | None, database: str, env_prefix: str
+    ) -> URL:
+        if user is None or password is None:
+            raise RuntimeError(f"{env_prefix}_USER / {env_prefix}_PASSWORD が設定されていません")
         return URL.create(
             "postgresql+psycopg",
             username=user,

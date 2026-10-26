@@ -12,6 +12,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app import request_context
+from app.db import set_rls_user
 from app.error_handlers import install_error_handling
 from app.logging_config import JsonFormatter, TextFormatter
 from app.models import AuditEvent, TrackingSession, User
@@ -158,14 +159,15 @@ def not_found_reasons(caplog: pytest.LogCaptureFixture) -> list[str]:
 async def test_delete_not_found_reason_is_logged(
     api_client: AsyncClient, db_session: AsyncSession, user: User, other_user: User, caplog
 ):
-    """レスポンスでは区別しない404の理由(無い・他ユーザーのもの)を、ログにだけ出す。"""
+    """404の理由は、RLSで他ユーザーの行が見えないので、無い・他ユーザーのものを区別しない。"""
+    await set_rls_user(db_session, other_user.id)
     others = await add_session(db_session, other_user)
 
     missing = await api_client.delete(f"/api/users/{user.id}/sessions/{uuid.uuid4()}")
     not_mine = await api_client.delete(f"/api/users/{user.id}/sessions/{others.id}")
 
     assert [missing.json()["code"], not_mine.json()["code"]] == ["session_not_found"] * 2
-    assert not_found_reasons(caplog) == ["not_exists", "other_user"]
+    assert not_found_reasons(caplog) == ["not_found_or_not_visible"] * 2
     # 他ユーザーのuser_idはログに出さない
     assert all(str(other_user.id) not in r.getMessage() for r in caplog.records)
     assert all(getattr(r, "user_id", None) != other_user.id for r in caplog.records)

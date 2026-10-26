@@ -7,6 +7,7 @@ from geoalchemy2 import WKTElement
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.db import set_rls_user
 from app.models import (
     AuditEvent,
     AuthSession,
@@ -31,6 +32,9 @@ RETENTION_DAYS = 90
 async def add_session(
     db: AsyncSession, user: User, name: str, deleted_at: datetime | None
 ) -> TrackingSession:
+    # sessionsのRLSのため、今のユーザーを渡す。パージもこのDBセッション(api用のロール)で実行するので、
+    # 見えるのはこのユーザーの行だけになる(worker用のロールでのパージはtest_rls.pyで確認する)
+    await set_rls_user(db, user.id)
     started_at = datetime(2026, 6, 1, 8, 0, tzinfo=UTC)
     tracking_session = TrackingSession(
         user_id=user.id,

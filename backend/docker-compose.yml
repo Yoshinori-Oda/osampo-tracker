@@ -24,6 +24,8 @@ services:
       MIGRATOR_DB_PASSWORD: ${MIGRATOR_DB_PASSWORD}
       APP_DB_USER: ${APP_DB_USER}
       APP_DB_PASSWORD: ${APP_DB_PASSWORD}
+      WORKER_DB_USER: ${WORKER_DB_USER}
+      WORKER_DB_PASSWORD: ${WORKER_DB_PASSWORD}
     ports:
       - "5432:5432"
     volumes:
@@ -52,6 +54,9 @@ services:
       # マイグレーション(docker compose run --rm api alembic ...)はこのサービスで実行する
       MIGRATOR_DB_USER: ${MIGRATOR_DB_USER}
       MIGRATOR_DB_PASSWORD: ${MIGRATOR_DB_PASSWORD}
+      # workerのロール。マイグレーション(ポリシー・権限の対象のロール名)と、pytest(workerの権限の確認)で使う
+      WORKER_DB_USER: ${WORKER_DB_USER}
+      WORKER_DB_PASSWORD: ${WORKER_DB_PASSWORD}
       PURGE_RETENTION_DAYS: ${PURGE_RETENTION_DAYS:-90}
       # メールアドレスの確認コード(省略可)。項目はbackend/docs/バックエンド構成.mdの「メールアドレスの確認コード」
       EMAIL_CODE_TTL_MINUTES: ${EMAIL_CODE_TTL_MINUTES:-10}
@@ -86,8 +91,9 @@ services:
       LOG_FORMAT: ${LOG_FORMAT:-text}
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
       POSTGRES_DB: ${POSTGRES_DB}
-      APP_DB_USER: ${APP_DB_USER}
-      APP_DB_PASSWORD: ${APP_DB_PASSWORD}
+      # apiのロールではなく、ジョブで使うテーブル・操作だけの権限を持つworker用のロールで接続する
+      WORKER_DB_USER: ${WORKER_DB_USER}
+      WORKER_DB_PASSWORD: ${WORKER_DB_PASSWORD}
       PURGE_RETENTION_DAYS: ${PURGE_RETENTION_DAYS:-90}
       PURGE_INTERVAL_HOURS: ${PURGE_INTERVAL_HOURS:-24}
       # メール送信(apiはoutboxに積むだけなので、SMTPの設定はworkerにだけ渡す)。既定はmailpit。項目はbackend/docs/バックエンド構成.md

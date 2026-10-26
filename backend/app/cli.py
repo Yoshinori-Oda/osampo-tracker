@@ -14,7 +14,7 @@ import uuid
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.db import SessionLocal
+from app.db import app_session
 from app.models import User
 from app.models.user import ROLE_ADMIN, ROLE_USER
 from app.security import hash_password
@@ -34,7 +34,7 @@ DEV_USERS = [
 
 async def seed_dev() -> None:
     """開発用のユーザーを入れる。既にあれば(idで判定)パスワード・ロール・確認状態を設定し直す。"""
-    async with SessionLocal() as db:
+    async with app_session() as db:
         now = await current_time(db)
         for user_id, email, password, display_name, role, verified in DEV_USERS:
             user = await db.get(User, user_id)
@@ -52,7 +52,7 @@ async def seed_dev() -> None:
 
 
 async def set_disabled(email: str, disabled: bool) -> None:
-    async with SessionLocal() as db:
+    async with app_session() as db:
         await _set_disabled(db, email, disabled)
 
 
@@ -63,7 +63,7 @@ async def _set_disabled(db: AsyncSession, email: str, disabled: bool) -> None:
 
 async def send_test_mail(to_address: str) -> None:
     """テストメールをoutboxに積む。送信はworkerが行う(開発中はMailpitの画面 http://localhost:8025 で確認する)。"""
-    async with SessionLocal() as db:
+    async with app_session() as db:
         email = await mail_service.enqueue_email(
             db,
             to_address=to_address,

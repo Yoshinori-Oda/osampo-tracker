@@ -17,6 +17,7 @@ from sqlalchemy.orm import selectinload
 from sqlalchemy.pool import NullPool
 
 from app.config import settings
+from app.db import set_rls_user
 from app.models import TrackingSession, TrackPoint, User
 
 
@@ -45,6 +46,8 @@ async def test_app_role_can_write_and_read_session_with_track_points(
     user = User(email=f"{uuid.uuid4()}@example.com", display_name="テスト")
     session.add(user)
     await session.flush()
+    # sessionsのRLSのため、今のユーザーを渡す
+    await set_rls_user(session, user.id)
 
     started_at = datetime(2026, 10, 1, 8, 0, tzinfo=UTC)
     tracking_session = TrackingSession(
@@ -94,6 +97,8 @@ async def test_track_points_relationship_is_not_lazy_loaded(app_connection: Asyn
     user = User(email=f"{uuid.uuid4()}@example.com", display_name="テスト")
     session.add(user)
     await session.flush()
+    # sessionsのRLSのため、今のユーザーを渡す
+    await set_rls_user(session, user.id)
     tracking_session = TrackingSession(
         user_id=user.id,
         name="読み込み忘れの確認",
@@ -125,6 +130,8 @@ async def test_altitude_columns_keep_double_precision(app_connection: AsyncConne
     user = User(email=f"{uuid.uuid4()}@example.com", display_name="テスト")
     session.add(user)
     await session.flush()
+    # sessionsのRLSのため、今のユーザーを渡す
+    await set_rls_user(session, user.id)
     tracking_session = TrackingSession(
         user_id=user.id,
         name="精度の確認",

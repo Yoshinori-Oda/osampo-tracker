@@ -8,6 +8,7 @@
 import logging
 import uuid
 from datetime import datetime, timedelta
+from typing import NoReturn
 
 from geoalchemy2 import Geometry
 from sqlalchemy import any_, bindparam, cast, func, insert, select
@@ -176,18 +177,8 @@ async def register_session(
     """sessionを登録し、(ステータスコード, updated_at)を返す。新規なら201、同じidの再送なら200。"""
     now = await current_time(db)
 
-    # 同時に同じidのPOSTが届いた場合、後から登録しようとした側はON CONFLICT DO NOTHINGで0件になるので、
-    # 既存のレコードとして判定し直す(2回目には必ず既存のレコードが見つかる)
-    for _ in range(2):
-        existing = await db.scalar(
-            select(TrackingSession)
-            .where(TrackingSession.id == body.id)
-            .with_for_update()
-            .execution_options(populate_existing=True)
-        )
-        if existing is not None:
-            return await _resolve_resent_session(db, user_id, body, existing, now)
-
+    existing = await _lock_session(db, body.id)
+    if existing is None:
         inserted_id = await db.scalar(
             pg_insert(TrackingSession)
             .values(
@@ -208,14 +199,33 @@ async def register_session(
             .on_conflict_do_nothing(index_elements=[TrackingSession.id])
             .returning(TrackingSession.id)
         )
-        if inserted_id is None:
-            continue
-        await _insert_track_points(db, body.id, body.track_points)
-        # sessionとtrack_pointsを1つのトランザクションで確定する
-        await db.commit()
-        return 201, now
+        if inserted_id is not None:
+            await _insert_track_points(db, body.id, body.track_points)
+            # sessionとtrack_pointsを1つのトランザクションで確定する
+            await db.commit()
+            return 201, now
+        # 同じidの行が既にあった。同時に同じidのPOSTが届いて先に登録された(ON CONFLICTは相手の確定を待つので、
+        # 次のSELECTで見える)か、他ユーザーの行と衝突した(RLSで見えない。一意制約はRLSに関係なく効く)
+        existing = await _lock_session(db, body.id)
+        if existing is None:
+            _raise_id_conflicted(body.id, "other_user")
+    return await _resolve_resent_session(db, user_id, body, existing, now)
 
-    raise RuntimeError(f"session {body.id} の登録で、既存のレコードも新規の登録も確認できませんでした")
+
+async def _lock_session(db: AsyncSession, session_id: uuid.UUID) -> TrackingSession | None:
+    """idでsessionを行ロック付きで取得する(RLSで他ユーザーの行は見えない。管理者は全ての行が見える)。"""
+    return await db.scalar(
+        select(TrackingSession)
+        .where(TrackingSession.id == session_id)
+        .with_for_update()
+        .execution_options(populate_existing=True)
+    )
+
+
+def _raise_id_conflicted(session_id: uuid.UUID, reason: str) -> NoReturn:
+    # 他ユーザーのuser_idはログにも出さない
+    logger.info("session id conflicted", extra={"session_id": session_id, "reason": reason})
+    raise AppError(409, ErrorCode.ID_CONFLICTED, "idが別のセッションと衝突しています")
 
 
 async def _resolve_resent_session(
@@ -226,21 +236,12 @@ async def _resolve_resent_session(
     now: datetime,
 ) -> tuple[int, datetime]:
     """同じidのレコードが既にある場合の判定(API設計書のPOSTの手順8)。"""
-    # 他ユーザーのレコード、または不変の項目が違う場合は別のsession(idの衝突)とみなす。
+    # 他ユーザーのレコード(管理者だけが見える)、または不変の項目が違う場合は別のsession(idの衝突)とみなす。
     # 他ユーザーのレコードは中身を比べない(他ユーザーのデータの内容を探る手段にしないため)
-    other_user = existing.user_id != user_id
-    if other_user or any(
-        getattr(existing, field) != getattr(body, field) for field in IMMUTABLE_FIELDS
-    ):
-        # 他ユーザーのuser_idはログにも出さない
-        logger.info(
-            "session id conflicted",
-            extra={
-                "session_id": body.id,
-                "reason": "other_user" if other_user else "different_session",
-            },
-        )
-        raise AppError(409, ErrorCode.ID_CONFLICTED, "idが別のセッションと衝突しています")
+    if existing.user_id != user_id:
+        _raise_id_conflicted(body.id, "other_user")
+    if any(getattr(existing, field) != getattr(body, field) for field in IMMUTABLE_FIELDS):
+        _raise_id_conflicted(body.id, "different_session")
 
     changed = _mutable_fields_changed(existing, body)
     if existing.deleted_at is not None:
@@ -366,7 +367,7 @@ async def _find_own_session(
 ) -> TrackingSession:
     """当該ユーザーのsessionを行ロック付きで取得する。他ユーザーのもの・存在しないものは区別せず404にする。
 
-    レスポンスでは区別しない理由(無い・他ユーザーのもの)を、調査のためにアプリのログにだけ出す。
+    RLSで他ユーザーの行は見えないので、ログでも「無い」と「他ユーザーのもの」を区別しない(reasonは1つ)。
     """
     target = await db.scalar(
         select(TrackingSession)
@@ -374,14 +375,9 @@ async def _find_own_session(
         .with_for_update()
     )
     if target is None:
-        exists = await db.scalar(select(TrackingSession.id).where(TrackingSession.id == session_id))
-        # 他ユーザーのuser_idはログにも出さない
         logger.info(
             "session not found",
-            extra={
-                "session_id": session_id,
-                "reason": "other_user" if exists is not None else "not_exists",
-            },
+            extra={"session_id": session_id, "reason": "not_found_or_not_visible"},
         )
         raise AppError(404, ErrorCode.SESSION_NOT_FOUND, "セッションが見つかりません")
     return target

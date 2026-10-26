@@ -201,6 +201,24 @@ async def test_fetch_as_admin(client_factory, admin_user: User, other_user: User
     assert response.json()["code"] == "user_not_found"
 
 
+async def test_admin_can_read_and_edit_other_users_sessions(
+    client_factory, admin_user: User, other_api_client: AsyncClient, other_user: User
+):
+    """RLSのポリシーで、管理者は他ユーザーの行も読み書きできる(監査ログのcommitを挟んでも今のユーザーが渡る)。"""
+    payload = await register(other_api_client, other_user)
+    admin_client = await client_factory(admin_user)
+
+    body = await fetch(admin_client, other_user)
+    assert [s["id"] for s in body["sessions"]] == [payload["id"]]
+    assert len(body["sessions"][0]["track_points"]) == 2
+
+    response = await admin_client.patch(
+        session_url(other_user.id, payload["id"]), json=edit_payload(name="管理者が修正")
+    )
+    assert response.status_code == 200, response.text
+    assert (await fetch(other_api_client, other_user))["sessions"][0]["name"] == "管理者が修正"
+
+
 async def test_fetch_with_non_json_accept_returns_not_acceptable(
     api_client: AsyncClient, user: User
 ):

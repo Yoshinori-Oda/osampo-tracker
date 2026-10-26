@@ -11,7 +11,7 @@ from datetime import UTC, datetime
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 
 from app.config import settings
-from app.db import SessionLocal
+from app.db import worker_session
 from app.logging_config import configure_logging
 from app.mail import send_via_smtp
 from app.services.mail_service import send_pending_emails
@@ -32,7 +32,7 @@ async def purge_job() -> None:
     失敗してもworkerは止めず、次の実行で再び試みる。
     """
     try:
-        async with SessionLocal() as db:
+        async with worker_session() as db:
             purged = await purge_expired_tombstones(db, settings.purge_retention_days)
             tokens, auth_sessions = await purge_expired_auth(db, settings.refresh_token_ttl_days)
             emails = await purge_old_outbox_emails(db, settings.outbox_retention_days)
@@ -54,7 +54,7 @@ async def purge_job() -> None:
 async def send_mail_job() -> None:
     """outboxの送信待ちのメールを送る。失敗してもworkerは止めず、次の実行で再び試みる。"""
     try:
-        async with SessionLocal() as db:
+        async with worker_session() as db:
             result = await send_pending_emails(
                 db, send_via_smtp, max_attempts=settings.mail_max_attempts
             )
