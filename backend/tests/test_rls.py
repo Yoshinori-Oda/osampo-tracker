@@ -302,8 +302,10 @@ async def test_worker_jobs_run_with_worker_role(worker_engine: AsyncEngine):
     [
         "SELECT count(*) FROM users",
         "SELECT count(*) FROM track_points",
-        "INSERT INTO sessions (user_id, name, started_at, ended_at, move_method)"
-        " VALUES (gen_random_uuid(), 'x', now(), now(), 'walk')",
+        (
+            "INSERT INTO sessions (user_id, name, started_at, ended_at, move_method)"
+            " VALUES (gen_random_uuid(), 'x', now(), now(), 'walk')"
+        ),
         "UPDATE sessions SET name = 'x'",
         "INSERT INTO audit_events (event_type) VALUES ('x')",
     ],
