@@ -159,12 +159,13 @@ erDiagram
     sessions ||--o{ track_points : "位置情報の点"
 
     users {
-        text id PK "サーバーのユーザーID"
+        text id PK "サーバーのユーザーID(ローカルアカウントは端末で生成したUUID)"
         text email
         text display_name
         bool email_verified
         text last_synced_at "サーバーのsynced_atをそのまま保存"
         datetime created_at
+        bool is_local "ローカルアカウントか"
     }
     sessions {
         text id PK "UUID"
@@ -196,21 +197,22 @@ erDiagram
 
 | テーブル | 内容 | 主な制約・方針 |
 |---|---|---|
-| `users` | この端末でログインしたユーザー(サーバーの`users`の写し) | 差分取得の基準時刻`last_synced_at`をユーザーごとに持つ |
+| `users` | この端末のユーザー。通常のアカウント(サーバーの`users`の写し)とローカルアカウント(`is_local`。同期しない) | 差分取得の基準時刻`last_synced_at`をユーザーごとに持つ |
 | `sessions` | 記録(セッション) | ユーザーごとに分けて持つ(`user_id`で絞る)。同期の状態を`status`で持つ(下記) |
 | `track_points` | 位置情報の点 | 緯度・経度・高度を別々の列に持つ |
 
 - 外部キーはDBを開くたびに`PRAGMA foreign_keys = ON`で有効にし、`ON DELETE CASCADE`で消す。アカウントの削除時は`users`の行を消せば
   その記録もまとめて消える
-- `sessions.user_id`は`ON UPDATE CASCADE`にしている(予定のローカルアカウントを通常のアカウントへ変えるときに、ユーザーIDを差し替えるため)
-- スキーマのバージョンは2(2で`users`を追加し、`sessions.user_id`に外部キーを付けた)
+- `sessions.user_id`は`ON UPDATE CASCADE`にしている(サーバーが発行したIDと重なったローカルアカウントのIDを変えるときに使う)。
+  ローカルアカウントを通常のアカウントにするときは、IDを書き換えずに`sessions.user_id`を付け替える
+- スキーマのバージョンは3(2で`users`を追加し、`sessions.user_id`に外部キーを付けた。3で`users.is_local`を追加した)
 
 ### secure storageのキー
 
 | キー | 内容 |
 |---|---|
 | `device_id` | 端末ID。初回起動時に生成するUUID(OSがハードウェアの識別子を提供しないため)。ログイン時にサーバーへ送り、`auth_sessions.device_id`になる |
-| `current_user_id` | ログイン中のユーザーID。起動時のログイン状態の復元に使う |
+| `current_user_id` | 今のユーザーID。起動時のログイン状態の復元に使う。通常のアカウントではトークンと組で、ローカルアカウントでは単独で保存する |
 | `access_token` | アクセストークン(ES256のJWT、15分) |
 | `refresh_token` | リフレッシュトークン(30日) |
 
