@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:convert';
 import 'package:http/http.dart' as http;
+import 'package:uuid/uuid.dart';
 import '../database/app_database.dart';
 import '../repositories/tracking_repository.dart';
 import '../utils/app_log.dart';
@@ -40,15 +41,18 @@ enum RefreshOutcome {
   failed,
 }
 
-/// 認証(ログイン・新規登録・トークンの更新・ログアウト・アカウントの削除)。
+/// 認証(ログイン・新規登録・トークンの更新・ログアウト・アカウントの削除)とローカルアカウント(作成・切り替え・削除・通常との相互の変更)。
 /// サーバー側の仕様はbackend/docs/API設計ドラフト.mdの「認証のendpoints」、端末側の約束は
-/// frontend/docs/ユーザー機能追加に伴う変更予定.mdの「認証(ブロック2)」
+/// frontend/docs/ユーザー機能追加に伴う変更予定.mdの「認証(ブロック2)」「ローカルアカウント」
 class AuthService {
   final AppDatabase _db;
   final AuthStorage _storage;
   final http.Client _client;
   final String _baseUrl;
+  // 通常のアカウントでログイン中ならそのユーザーとトークン
   StoredAuth? _current;
+  // ローカルアカウントで入っているならそのユーザーID(_currentとどちらか一方だけが入る)
+  String? _localUserId;
   Future<RefreshOutcome>? _refreshing;
 
   static const Duration _timeoutDuration = Duration(seconds: 5);
@@ -64,28 +68,96 @@ class AuthService {
     : _client = client ?? RequestIdClient(),
       _baseUrl = baseUrl ?? TrackingRepository.defaultBaseUrl;
 
-  String? get userId => _current?.userId;
+  // 初回起動時に作るローカルアカウントの表示名
+  static const defaultLocalDisplayName = 'ローカル';
+
+  String? get userId => _current?.userId ?? _localUserId;
   String? get accessToken => _current?.accessToken;
+  bool get isLocal => _localUserId != null;
 
-  /// 起動時に、保存してあるログイン状態を読み込む。ログイン中のユーザーIDを返す(未ログインならnull)
+  /// 起動時に、保存してある今のユーザーを読み込む。今のユーザーのIDを返す(未ログインならnull)。
+  /// 端末にユーザーが1人もいない(初回起動)なら、ローカルアカウントを作って入る
   Future<String?> restore() async {
-    _current = await _storage.read();
-    return _current?.userId;
+    _current = null;
+    _localUserId = null;
+    final userId = await _storage.readCurrentUserId();
+    if (userId == null) {
+      if (await _db.hasAnyUser()) return null;
+      return createLocalAccount(defaultLocalDisplayName);
+    }
+    final user = await _db.getUser(userId);
+    if (user != null && user.isLocal) {
+      _localUserId = userId;
+      return userId;
+    }
+    // 通常のアカウントはトークンと端末のユーザーの行が揃っていなければ未ログインとして扱う
+    final stored = await _storage.read();
+    if (user == null || stored == null || stored.userId != userId) {
+      await _storage.clear();
+      return null;
+    }
+    _current = stored;
+    return userId;
   }
 
-  Future<AuthResult> login({required String email, required String password}) {
-    return _authenticate('/auth/login', {'email': email, 'password': password});
+  /// ローカルアカウントを作って入る。作ったユーザーのIDを返す
+  Future<String> createLocalAccount(String displayName) async {
+    final id = const Uuid().v4();
+    await _db.createLocalUser(id: id, displayName: displayName);
+    await switchToLocalAccount(id);
+    return id;
   }
 
-  Future<AuthResult> signup({required String email, required String password, String? displayName}) {
-    return _authenticate('/auth/signup', {
-      'email': email,
-      'password': password,
-      if (displayName != null && displayName.trim().isNotEmpty) 'display_name': displayName.trim(),
-    });
+  /// ローカルアカウントに切り替える。通常のアカウントでログイン中は使えない(先にログアウトする)
+  Future<void> switchToLocalAccount(String userId) async {
+    if (_current != null) throw StateError('logout before switching to a local account');
+    await _storage.saveLocalUser(userId);
+    _localUserId = userId;
   }
 
-  Future<AuthResult> _authenticate(String path, Map<String, dynamic> body) async {
+  /// ローカルアカウントとその記録を端末から消す。今のユーザーなら未ログインになる
+  Future<void> deleteLocalAccount(String userId) async {
+    final user = await _db.getUser(userId);
+    if (user == null || !user.isLocal) return;
+    await _db.deleteUserData(userId);
+    if (_localUserId == userId) {
+      await _storage.clear();
+      _localUserId = null;
+    }
+  }
+
+  /// ログインする。mergeLocalAccountなら、今のローカルアカウントの記録をそのアカウントに移す(ローカル→通常)
+  Future<AuthResult> login({required String email, required String password, bool mergeLocalAccount = false}) {
+    return _authenticate(
+      '/auth/login',
+      {'email': email, 'password': password},
+      mergeLocalAccount: mergeLocalAccount,
+    );
+  }
+
+  /// 新規登録する。mergeLocalAccountなら、今のローカルアカウントの記録を新しいアカウントに移す(ローカル→通常)
+  Future<AuthResult> signup({
+    required String email,
+    required String password,
+    String? displayName,
+    bool mergeLocalAccount = false,
+  }) {
+    return _authenticate(
+      '/auth/signup',
+      {
+        'email': email,
+        'password': password,
+        if (displayName != null && displayName.trim().isNotEmpty) 'display_name': displayName.trim(),
+      },
+      mergeLocalAccount: mergeLocalAccount,
+    );
+  }
+
+  // APIを呼び、成功したら端末のユーザーの行を作って(記録を移す場合はここで移す)からトークンと今のユーザーを保存する。
+  // 端末の書き換えの前に落ちても、今のユーザーは元のまま(サーバーに残るログイン状態はリフレッシュトークンの期限で無効になる)
+  Future<AuthResult> _authenticate(String path, Map<String, dynamic> body, {bool mergeLocalAccount = false}) async {
+    final mergeFrom = mergeLocalAccount ? _localUserId : null;
+    if (mergeLocalAccount && mergeFrom == null) throw StateError('no local account to merge');
     final payload = {...body, 'device_id': await _storage.deviceId()};
     final http.Response response;
     try {
@@ -104,13 +176,15 @@ class AuthService {
     final tokens = json.decode(response.body) as Map<String, dynamic>;
     final user = tokens['user'] as Map<String, dynamic>;
     // sessions.user_idの外部キーのため、ユーザーの行を先に作ってからログイン状態を保存する
-    await _db.upsertUser(
+    await _db.saveServerUser(
       id: user['id'] as String,
       email: user['email'] as String,
       displayName: user['display_name'] as String,
       emailVerified: user['email_verified'] as bool,
+      mergeFromLocalUserId: mergeFrom,
     );
     await _saveTokens(userId: user['id'] as String, tokens: tokens);
+    _localUserId = null;
     return AuthResult(userId: user['id'] as String, emailVerified: user['email_verified'] as bool);
   }
 
@@ -300,6 +374,26 @@ class AuthService {
   Future<void> deleteAccount(http.Client authorizedClient) async {
     final current = _current;
     if (current == null) return;
+    await _deleteServerAccount(authorizedClient);
+    await _db.deleteUserData(current.userId);
+    await _storage.clear();
+    _current = null;
+  }
+
+  /// 通常のアカウントをローカルアカウントにする。サーバーのアカウントを削除し(アカウントの削除と同じく401も削除済みとみなす)、
+  /// 端末の記録はローカルアカウントのものとして残す。ユーザーIDは変わらない
+  Future<void> convertToLocal(http.Client authorizedClient) async {
+    final current = _current;
+    if (current == null) return;
+    await _deleteServerAccount(authorizedClient);
+    await _db.convertToLocalUser(current.userId);
+    await _storage.saveLocalUser(current.userId);
+    _current = null;
+    _localUserId = current.userId;
+  }
+
+  // DELETE /users/me。204と401は削除済みとして戻り、それ以外はAuthExceptionを投げる
+  Future<void> _deleteServerAccount(http.Client authorizedClient) async {
     final http.Response response;
     try {
       response = await authorizedClient
@@ -311,9 +405,6 @@ class AuthService {
     if (response.statusCode != 204 && response.statusCode != 401) {
       throw AuthException(_errorCode(response) ?? 'unknown', statusCode: response.statusCode);
     }
-    await _db.deleteUserData(current.userId);
-    await _storage.clear();
-    _current = null;
   }
 
   // エラーのレスポンスをAuthExceptionにする。429(too_many_requests)なら待つ秒数(Retry-After)も入れる

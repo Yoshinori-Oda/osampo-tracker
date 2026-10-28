@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:convert';
 
+import 'package:drift/drift.dart' hide isNull, isNotNull;
 import 'package:drift/native.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
@@ -9,6 +10,9 @@ import 'package:test_tracking_01/auth/auth_service.dart';
 import 'package:test_tracking_01/auth/auth_storage.dart';
 import 'package:test_tracking_01/auth/authorized_client.dart';
 import 'package:test_tracking_01/database/app_database.dart';
+import 'package:test_tracking_01/models/status.dart';
+import 'package:test_tracking_01/providers/auth_providers.dart';
+import 'package:test_tracking_01/widgets/auth_banner_view.dart';
 
 // 認証(AuthService・AuthorizedClient)がbackend/docs/API設計ドラフト.mdの「認証のendpoints」を
 // frontend/docs/ユーザー機能追加に伴う変更予定.mdの「認証(ブロック2)」の約束どおりに呼ぶことの確認
@@ -18,7 +22,10 @@ const _baseUrl = 'http://test/api';
 const _deviceId = '33333333-3333-3333-3333-333333333333';
 
 class _MemoryAuthStorage implements AuthStorage {
+  // 通常のアカウントの今のユーザーとトークン
   StoredAuth? stored;
+  // トークン無しで保存した今のユーザー(ローカルアカウント)
+  String? localUserId;
 
   @override
   Future<String> deviceId() async => _deviceId;
@@ -27,10 +34,25 @@ class _MemoryAuthStorage implements AuthStorage {
   Future<StoredAuth?> read() async => stored;
 
   @override
-  Future<void> save(StoredAuth auth) async => stored = auth;
+  Future<String?> readCurrentUserId() async => stored?.userId ?? localUserId;
 
   @override
-  Future<void> clear() async => stored = null;
+  Future<void> save(StoredAuth auth) async {
+    stored = auth;
+    localUserId = null;
+  }
+
+  @override
+  Future<void> saveLocalUser(String userId) async {
+    stored = null;
+    localUserId = userId;
+  }
+
+  @override
+  Future<void> clear() async {
+    stored = null;
+    localUserId = null;
+  }
 }
 
 http.Response _json(int status, Object body) => http.Response(
@@ -552,6 +574,246 @@ void main() {
       expect(response.statusCode, 403);
       expect(jsonDecode(response.body)['code'], 'email_not_verified');
       expect(notVerified, 1);
+    });
+  });
+
+  group('ローカルアカウント', () {
+    const localId = '44444444-4444-4444-4444-444444444444';
+
+    Future<void> insertSession(String id, Status status, String userId) async {
+      await db.into(db.sessions).insert(SessionsCompanion.insert(
+        id: id,
+        userId: userId,
+        startedAt: DateTime.utc(2026, 10, 1, 8),
+        status: Value(status),
+      ));
+    }
+
+    Future<Map<String, (String, Status)>> sessionsById() async => {
+      for (final session in await db.select(db.sessions).get()) session.id: (session.userId, session.status),
+    };
+
+    // ローカルアカウントで入った状態にする
+    Future<AuthService> enterLocal(Future<http.Response> Function(http.Request request) handler) async {
+      await db.createLocalUser(id: localId, displayName: 'ローカル');
+      storage.localUserId = localId;
+      final service = createService(handler);
+      await service.restore();
+      return service;
+    }
+
+    test('端末にユーザーがいない(初回起動)なら、ローカルアカウントを作って入る', () async {
+      final service = createService((_) async => throw StateError('no request expected'));
+
+      final userId = await service.restore();
+
+      expect(userId, isNotNull);
+      expect(service.isLocal, isTrue);
+      expect(service.accessToken, isNull);
+      expect(storage.localUserId, userId);
+      final user = (await db.getUser(userId!))!;
+      expect(user.isLocal, isTrue);
+      expect(user.displayName, AuthService.defaultLocalDisplayName);
+      expect(requests, isEmpty);
+    });
+
+    test('端末にユーザーがいて今のユーザーが無ければ(ログアウトした後)、作らずに未ログインにする', () async {
+      await db.upsertUser(id: _userId, email: 'test@example.com', displayName: 'テスト', emailVerified: true);
+      final service = createService((_) async => throw StateError('no request expected'));
+
+      expect(await service.restore(), isNull);
+
+      expect((await db.select(db.users).get()).map((user) => user.id), [_userId]);
+    });
+
+    test('ローカルアカウントはトークンが無くても復元する', () async {
+      final service = await enterLocal((_) async => throw StateError('no request expected'));
+
+      expect(service.userId, localId);
+      expect(service.isLocal, isTrue);
+    });
+
+    test('通常のアカウントでトークンが無ければ、未ログインにして今のユーザーを消す', () async {
+      await db.upsertUser(id: _userId, email: 'test@example.com', displayName: 'テスト', emailVerified: true);
+      storage.localUserId = _userId;
+      final service = createService((_) async => throw StateError('no request expected'));
+
+      expect(await service.restore(), isNull);
+
+      expect(await storage.readCurrentUserId(), isNull);
+      expect(await db.getUser(_userId), isNotNull);
+    });
+
+    test('ローカルアカウントを削除すると記録も消え、今のユーザーなら未ログインになる。通常のアカウントは消さない', () async {
+      final service = await enterLocal((_) async => throw StateError('no request expected'));
+      await insertSession('l1', Status.ended, localId);
+      await db.upsertUser(id: _userId, email: 'test@example.com', displayName: 'テスト', emailVerified: true);
+
+      await service.deleteLocalAccount(_userId);
+      await service.deleteLocalAccount(localId);
+
+      expect(await db.getUser(localId), isNull);
+      expect(await sessionsById(), isEmpty);
+      expect(await db.getUser(_userId), isNotNull);
+      expect(service.userId, isNull);
+      expect(await storage.readCurrentUserId(), isNull);
+    });
+
+    test('通常のアカウントでログイン中は、ローカルアカウントに切り替えられない(先にログアウトする)', () async {
+      await db.createLocalUser(id: localId, displayName: 'ローカル');
+      final service = createService((_) async => throw StateError('no request expected'));
+      await signIn(service);
+
+      await expectLater(service.switchToLocalAccount(localId), throwsStateError);
+      expect(storage.stored, isNotNull);
+    });
+
+    test('新規登録して記録を移すと、記録を未登録(ended)にして移し、ローカルアカウントを消す', () async {
+      final service = await enterLocal((_) async => _json(201, _tokens('1', emailVerified: false)));
+      await insertSession('l1', Status.updated, localId);
+      await insertSession('l2', Status.synced, localId);
+      await insertSession('l3', Status.deletedUnsynced, localId);
+      await insertSession('recording', Status.inProgress, localId);
+
+      final result = await service.signup(email: 'test@example.com', password: 'password1', mergeLocalAccount: true);
+
+      expect(result.userId, _userId);
+      expect(await sessionsById(), {
+        'l1': (_userId, Status.ended),
+        'l2': (_userId, Status.ended),
+        'recording': (_userId, Status.inProgress),
+      });
+      expect(await db.getUser(localId), isNull);
+      expect((await db.getUser(_userId))!.isLocal, isFalse);
+      expect(storage.stored!.userId, _userId);
+      expect(service.isLocal, isFalse);
+      expect(service.accessToken, 'access-1');
+    });
+
+    test('ログインして記録を移すと、端末に既にあるそのアカウントの記録・同期の基準時刻と合わさる', () async {
+      final service = await enterLocal((_) async => _json(200, _tokens('1')));
+      await db.upsertUser(id: _userId, email: 'test@example.com', displayName: 'テスト', emailVerified: true);
+      await db.setLastSyncedAt(_userId, '2026-10-01T00:00:00Z');
+      await insertSession('n1', Status.synced, _userId);
+      await insertSession('l1', Status.ended, localId);
+
+      await service.login(email: 'test@example.com', password: 'password1', mergeLocalAccount: true);
+
+      expect(await sessionsById(), {'n1': (_userId, Status.synced), 'l1': (_userId, Status.ended)});
+      expect(await db.getLastSyncedAt(_userId), '2026-10-01T00:00:00Z');
+      expect(await db.getUser(localId), isNull);
+    });
+
+    test('サーバーのIDが端末の別のローカルアカウントと重なったら、そのローカルアカウントのIDを変えて残す', () async {
+      final service = await enterLocal((_) async => _json(200, _tokens('1')));
+      await db.createLocalUser(id: _userId, displayName: '別のローカル');
+      await insertSession('other', Status.ended, _userId);
+      await insertSession('l1', Status.ended, localId);
+
+      await service.login(email: 'test@example.com', password: 'password1', mergeLocalAccount: true);
+
+      expect((await db.getUser(_userId))!.isLocal, isFalse);
+      final others = (await db.select(db.users).get()).where((user) => user.isLocal).toList();
+      expect(others.single.displayName, '別のローカル');
+      expect(others.single.id, isNot(_userId));
+      final sessions = await sessionsById();
+      expect(sessions['other']!.$1, others.single.id);
+      expect(sessions['l1']!.$1, _userId);
+    });
+
+    test('ログイン・新規登録が失敗したら、ローカルアカウントのまま何も変えない', () async {
+      final service = await enterLocal((_) async => _error(409, 'email_already_registered'));
+      await insertSession('l1', Status.ended, localId);
+
+      await expectLater(
+        service.signup(email: 'test@example.com', password: 'password1', mergeLocalAccount: true),
+        throwsA(isA<AuthException>().having((e) => e.code, 'code', 'email_already_registered')),
+      );
+
+      expect(await sessionsById(), {'l1': (localId, Status.ended)});
+      expect(service.userId, localId);
+      expect(service.isLocal, isTrue);
+      expect(storage.localUserId, localId);
+    });
+
+    test('ローカルアカウントで入っていなければ、記録を移すログインはできない', () async {
+      final service = createService((_) async => _json(200, _tokens('1')));
+      await signIn(service);
+
+      await expectLater(
+        service.login(email: 'test@example.com', password: 'password1', mergeLocalAccount: true),
+        throwsStateError,
+      );
+      expect(requests, isEmpty);
+    });
+
+    group('通常→ローカル', () {
+      Future<AuthService> signInWithSessions() async {
+        final service = createService((_) async => throw StateError('no request expected'));
+        await signIn(service);
+        await db.setLastSyncedAt(_userId, '2026-10-01T00:00:00Z');
+        await insertSession('s1', Status.synced, _userId);
+        await insertSession('s2', Status.updated, _userId);
+        await insertSession('s3', Status.deletedUnsynced, _userId);
+        await insertSession('recording', Status.inProgress, _userId);
+        return service;
+      }
+
+      for (final (status, code) in [(204, null), (401, 'unauthenticated')]) {
+        test('サーバーのアカウントの削除が$statusなら、IDはそのままでローカルアカウントにし、記録を残す', () async {
+          final service = await signInWithSessions();
+          final apiRequests = <http.Request>[];
+          final client = AuthorizedClient(service, inner: MockClient((request) async {
+            apiRequests.add(request);
+            return code == null ? http.Response('', status) : _error(status, code);
+          }));
+
+          await service.convertToLocal(client);
+
+          expect(apiRequests.single.method, 'DELETE');
+          expect(apiRequests.single.url.path, '/api/users/me');
+          final user = (await db.getUser(_userId))!;
+          expect(user.isLocal, isTrue);
+          expect(user.email, '');
+          expect(user.emailVerified, isFalse);
+          expect(user.lastSyncedAt, isNull);
+          expect(await sessionsById(), {
+            's1': (_userId, Status.ended),
+            's2': (_userId, Status.ended),
+            'recording': (_userId, Status.inProgress),
+          });
+          expect(storage.stored, isNull);
+          expect(storage.localUserId, _userId);
+          expect(service.userId, _userId);
+          expect(service.isLocal, isTrue);
+          expect(service.accessToken, isNull);
+        });
+      }
+
+      test('サーバーのアカウントを削除できなければ、何も変えずにAuthExceptionを投げる', () async {
+        final service = await signInWithSessions();
+        final client = AuthorizedClient(service, inner: MockClient((_) async => _error(500, 'internal_error')));
+
+        await expectLater(
+          service.convertToLocal(client),
+          throwsA(isA<AuthException>().having((e) => e.code, 'code', 'internal_error')),
+        );
+
+        expect((await db.getUser(_userId))!.isLocal, isFalse);
+        expect((await sessionsById())['s1'], (_userId, Status.synced));
+        expect(storage.stored, isNotNull);
+        expect(service.isLocal, isFalse);
+      });
+    });
+
+    test('ローカルアカウントは同期せず、メールアドレスが未確認でもバナーを出さない', () {
+      const local = AuthState(userId: localId, isLocal: true);
+      expect(local.canSync, isFalse);
+      expect(AuthBannerView.isActive(local), isFalse);
+      // メールアドレスが確認済みでも、ローカルアカウントなら同期しない
+      expect(const AuthState(userId: localId, emailVerified: true, isLocal: true).canSync, isFalse);
+      expect(const AuthState(userId: _userId, emailVerified: true).canSync, isTrue);
+      expect(AuthBannerView.isActive(const AuthState(userId: _userId)), isTrue);
     });
   });
 }

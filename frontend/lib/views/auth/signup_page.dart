@@ -8,9 +8,12 @@ import '../../utils/app_log.dart';
 import 'auth_error_messages.dart';
 import 'email_verification_page.dart';
 
-// 新規登録画面。登録するとそのままログインした状態になる。メールアドレスが未確認の間は、記録・閲覧はできるが同期はできない
+// 新規登録画面。登録するとそのままログインした状態になる。メールアドレスが未確認の間は、記録・閲覧はできるが同期はできない。
+// mergeLocalなら、今のローカルアカウントの記録を新しいアカウントに移す(ローカル→通常)
 class SignupPage extends ConsumerStatefulWidget {
-  const SignupPage({super.key});
+  final bool mergeLocal;
+
+  const SignupPage({super.key, this.mergeLocal = false});
 
   @override
   ConsumerState<SignupPage> createState() => _SignupPageState();
@@ -39,11 +42,20 @@ class _SignupPageState extends ConsumerState<SignupPage> {
       _errorMessage = null;
     });
     try {
-      await ref.read(authControllerProvider.notifier).signup(
-        email: _emailController.text.trim(),
-        password: _passwordController.text,
-        displayName: _displayNameController.text,
-      );
+      final controller = ref.read(authControllerProvider.notifier);
+      if (widget.mergeLocal) {
+        await controller.signupFromLocal(
+          email: _emailController.text.trim(),
+          password: _passwordController.text,
+          displayName: _displayNameController.text,
+        );
+      } else {
+        await controller.signup(
+          email: _emailController.text.trim(),
+          password: _passwordController.text,
+          displayName: _displayNameController.text,
+        );
+      }
       if (!mounted) return;
       Navigator.of(context).popUntil((route) => route.isFirst);
       // メイン画面(AuthGateが切り替える)の上に、確認コードの入力画面を開く。コードはサインアップ時にサーバーが送り済み。
@@ -52,7 +64,10 @@ class _SignupPageState extends ConsumerState<SignupPage> {
         MaterialPageRoute(builder: (_) => const EmailVerificationPage(afterSignup: true)),
       );
     } on AuthException catch (e) {
-      setState(() => _errorMessage = signupErrorMessage(e));
+      // 記録を移す途中でアプリが落ちた後のやり直しでは、サーバーにアカウントができていて登録済みになるので、ログインで移すよう案内する
+      setState(() => _errorMessage = widget.mergeLocal && e.code == 'email_already_registered'
+        ? 'このメールアドレスは登録済みです。前の画面の「ログインして記録を移す」から移してください'
+        : signupErrorMessage(e));
     } catch (e) {
       // 通信以外の失敗(端末の保存領域に書けない・レスポンスの形式が違う等)も、画面に出して止まらないようにする
       appLog('auth', 'unexpected error', error: e);
@@ -72,7 +87,7 @@ class _SignupPageState extends ConsumerState<SignupPage> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: const Text('新規登録')),
+      appBar: AppBar(title: Text(widget.mergeLocal ? '新規登録して記録を移す' : '新規登録')),
       body: SafeArea(
         child: SingleChildScrollView(
           padding: const EdgeInsets.all(24),

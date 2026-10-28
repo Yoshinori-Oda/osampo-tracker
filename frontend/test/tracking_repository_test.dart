@@ -325,6 +325,16 @@ void main() {
 
       expect((await findSession('s1'))!.status, Status.deletedUnsynced);
     });
+
+    test('ローカルアカウントのセッションは、DELETEを送る先が無いので物理削除する', () async {
+      const localUserId = '44444444-4444-4444-4444-444444444444';
+      await db.createLocalUser(id: localUserId, displayName: 'ローカル');
+      await insertSession('s1', Status.ended, userId: localUserId);
+
+      await db.deleteSession(session: (await findSession('s1'))!);
+
+      expect(await findSession('s1'), isNull);
+    });
   });
 
   group('auth', () {

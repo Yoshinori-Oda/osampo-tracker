@@ -9,9 +9,9 @@ import '../views/auth/login_page.dart';
 class AuthBannerView extends ConsumerWidget {
   const AuthBannerView({super.key});
 
-  // バナーを表示するか(MainPageの上部の余白の計算にも使う)
+  // バナーを表示するか(MainPageの上部の余白の計算にも使う)。ローカルアカウントは同期しないので出さない
   static bool isActive(AuthState? auth) =>
-    auth != null && auth.signedIn && (auth.needsRelogin || !auth.emailVerified);
+    auth != null && auth.signedIn && !auth.isLocal && (auth.needsRelogin || !auth.emailVerified);
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {

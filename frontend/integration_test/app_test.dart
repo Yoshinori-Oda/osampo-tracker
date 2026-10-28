@@ -25,7 +25,14 @@ class _SignedInAuthStorage implements AuthStorage {
   Future<StoredAuth?> read() async => _stored;
 
   @override
+  Future<String?> readCurrentUserId() async => _stored?.userId;
+
+  @override
   Future<void> save(StoredAuth auth) async => _stored = auth;
+
+  // E2Eではローカルアカウントに切り替えない
+  @override
+  Future<void> saveLocalUser(String userId) async => throw UnsupportedError('not used in e2e');
 
   @override
   Future<void> clear() async => _stored = null;

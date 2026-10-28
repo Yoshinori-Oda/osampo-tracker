@@ -5,7 +5,7 @@ import 'package:drift/drift.dart';
 import 'package:drift/native.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:path/path.dart' as p;
-//import 'package:uuid/uuid.dart';
+import 'package:uuid/uuid.dart';
 import '../models/recording_session.dart';
 import '../models/status.dart';
 import '../models/move_method.dart';
@@ -13,9 +13,10 @@ import '../utils/app_log.dart';
 
 part 'app_database.g.dart';
 
-// この端末でログインしたユーザー(サーバーのusersの写し)。schemaVersion 2で追加
+// この端末のユーザー。通常のアカウント(サーバーのusersの写し)とローカルアカウント(同期しない。is_local)がある。
+// schemaVersion 2で追加、3でis_localを追加
 class Users extends Table {
-  // サーバーのユーザーID
+  // サーバーのユーザーID(ローカルアカウントは端末で生成したUUID)
   TextColumn get id => text()();
   TextColumn get email => text().withDefault(const Constant(''))();
   TextColumn get displayName => text().withDefault(const Constant(''))();
@@ -24,6 +25,8 @@ class Users extends Table {
   // 差分取得の基準時刻。サーバーが返したsynced_atの文字列をそのまま保存する(nullなら初回の同期)
   TextColumn get lastSyncedAt => text().nullable()();
   DateTimeColumn get createdAt => dateTime().withDefault(currentDateAndTime)();
+  // ローカルアカウント(同期しないアカウント)か
+  BoolColumn get isLocal => boolean().withDefault(const Constant(false))();
 
   @override
   Set<Column> get primaryKey => {id};
@@ -32,7 +35,7 @@ class Users extends Table {
 class Sessions extends Table {
   // basic info
   TextColumn get id => text()();
-  // 将来のローカルアカウント→通常アカウントへの変更でusers.idを差し替えたときに追随するよう、ON UPDATE CASCADEにする
+  // users.idを差し替えたときに追随するよう、ON UPDATE CASCADEにする(サーバーのIDと重なったローカルアカウントのIDを変えるときに使う)
   TextColumn get userId => text().references(
     Users,
     #id,
@@ -78,7 +81,7 @@ class AppDatabase extends _$AppDatabase {
   AppDatabase.forTesting(super.executor);
 
   @override
-  int get schemaVersion => 2;
+  int get schemaVersion => 3;
 
   @override
   MigrationStrategy get migration => MigrationStrategy(
@@ -93,6 +96,10 @@ class AppDatabase extends _$AppDatabase {
         // これまで外部キーが効いておらず、sessionsの削除で残っていたtrack_pointsを片付ける
         await customStatement('DELETE FROM track_points WHERE session_id NOT IN (SELECT id FROM sessions)');
       }
+      // 1からの移行では、上のcreateTableが今の定義(is_localを含む)でusersを作るので、2からの場合だけ列を足す
+      if (from == 2) {
+        await m.addColumn(users, users.isLocal);
+      }
     },
     beforeOpen: (details) async {
       // SQLiteは既定で外部キーが無効なので、接続を開くたびに有効にする
@@ -103,7 +110,8 @@ class AppDatabase extends _$AppDatabase {
 
   // ---- users ------------------------------------------------------------------
 
-  // ログイン・新規登録・GET /users/meで受け取ったユーザーの情報を保存する(last_synced_at・created_atは変えない)
+  // ログイン・新規登録・GET /users/meで受け取ったユーザーの情報を保存する(last_synced_at・created_atは変えない)。
+  // ログイン・新規登録ではsaveServerUserを使う(端末のローカルアカウントとIDが重なった場合の扱いがあるため)
   Future<void> upsertUser({
     required String id,
     required String email,
@@ -116,7 +124,90 @@ class AppDatabase extends _$AppDatabase {
         email: Value(email),
         displayName: Value(displayName),
         emailVerified: Value(emailVerified),
+        isLocal: const Value(false),
       )
+    );
+  }
+
+  // ログイン・新規登録で受け取ったサーバーのユーザーを保存する。mergeFromLocalUserIdを渡すと、そのローカルアカウントの記録を
+  // このユーザーに移して(未登録のendedにする)、ローカルアカウントを消す(ローカル→通常)。
+  // IDはサーバー側を優先する: 端末の別のローカルアカウントとIDが重なった場合は、そのローカルアカウントのIDを変える
+  Future<void> saveServerUser({
+    required String id,
+    required String email,
+    required String displayName,
+    required bool emailVerified,
+    String? mergeFromLocalUserId,
+  }) {
+    return transaction(() async {
+      final existing = await getUser(id);
+      if (existing != null && existing.isLocal && id != mergeFromLocalUserId) {
+        // sessions.user_idはON UPDATE CASCADEで追随する
+        await (update(users)..where((tbl) => tbl.id.equals(id))).write(UsersCompanion(id: Value(const Uuid().v4())));
+      }
+      // sessions.user_idの外部キーのため、ユーザーの行を先に作ってから記録を移す
+      await upsertUser(id: id, email: email, displayName: displayName, emailVerified: emailVerified);
+      final from = mergeFromLocalUserId;
+      if (from == null) return;
+      await _resetSessionsToUnregistered(from);
+      if (from != id) {
+        await (update(sessions)..where((tbl) => tbl.userId.equals(from))).write(SessionsCompanion(userId: Value(id)));
+        await (delete(users)..where((tbl) => tbl.id.equals(from))).go();
+      }
+    });
+  }
+
+  // 記録をサーバーに未登録の状態にする(ローカル→通常・通常→ローカルの変更時)。削除待ちは物理削除し、
+  // 収録中以外はendedにする(通常のアカウントになったら、次の同期で全てPOSTされる)
+  Future<void> _resetSessionsToUnregistered(String userId) async {
+    await (delete(sessions)
+      ..where((tbl) => tbl.userId.equals(userId) & tbl.status.equals(Status.deletedUnsynced.index))
+    ).go();
+    await (update(sessions)
+      ..where((tbl) => tbl.userId.equals(userId) & tbl.status.equals(Status.inProgress.index).not())
+    ).write(const SessionsCompanion(status: Value(Status.ended)));
+  }
+
+  // 通常のアカウントをローカルアカウントにする(サーバーのアカウントを削除した後)。端末の記録は残す
+  Future<void> convertToLocalUser(String userId) {
+    return transaction(() async {
+      await (update(users)..where((tbl) => tbl.id.equals(userId))).write(
+        const UsersCompanion(
+          isLocal: Value(true),
+          email: Value(''),
+          emailVerified: Value(false),
+          lastSyncedAt: Value(null),
+        )
+      );
+      await _resetSessionsToUnregistered(userId);
+    });
+  }
+
+  // ---- ローカルアカウント ------------------------------------------------------
+
+  Future<void> createLocalUser({required String id, required String displayName}) {
+    return into(users).insert(
+      UsersCompanion.insert(id: id, displayName: Value(displayName), isLocal: const Value(true))
+    );
+  }
+
+  Stream<List<User>> watchLocalUsers() {
+    return (select(users)
+      ..where((tbl) => tbl.isLocal.equals(true))
+      ..orderBy([(tbl) => OrderingTerm.asc(tbl.createdAt)])
+    ).watch();
+  }
+
+  // 端末にユーザー(通常・ローカルとも)が1人でもいるか。いなければ初回起動として扱う
+  Future<bool> hasAnyUser() async {
+    final rows = await (selectOnly(users)..addColumns([users.id])..limit(1)).get();
+    return rows.isNotEmpty;
+  }
+
+  // ローカルアカウントの表示名を変える(通常のアカウントはサーバーで変えてから、レスポンスをupsertUserで書く)
+  Future<void> setLocalDisplayName(String userId, String displayName) {
+    return (update(users)..where((tbl) => tbl.id.equals(userId) & tbl.isLocal.equals(true))).write(
+      UsersCompanion(displayName: Value(displayName))
     );
   }
 
@@ -137,7 +228,7 @@ class AppDatabase extends _$AppDatabase {
     );
   }
 
-  // ユーザーとそのデータ(sessions・track_points)を端末から消す(アカウントの削除時)。外部キーのCASCADEで消える
+  // ユーザーとそのデータ(sessions・track_points)を端末から消す(アカウント・ローカルアカウントの削除時)。外部キーのCASCADEで消える
   Future<void> deleteUserData(String userId) =>
     (delete(users)..where((tbl) => tbl.id.equals(userId))).go();
 
@@ -266,9 +357,11 @@ class AppDatabase extends _$AppDatabase {
   // 保存済みセッションの削除。収録中の行はそのまま物理削除し、それ以外はdeletedUnsyncedにして
   // 次回同期でDELETEを送る。ended(登録のPOSTの成功を確認できていない)の行もDELETEを送る:
   // POSTがサーバーでは成功していてレスポンスだけが届かなかった場合に、ローカルだけで消すと
-  // サーバーに残ったsessionが次のpullで返ってきて復活してしまうため(未登録ならサーバーが404を返す)
+  // サーバーに残ったsessionが次のpullで返ってきて復活してしまうため(未登録ならサーバーが404を返す)。
+  // ローカルアカウントの記録は、DELETEを送る先が無いので物理削除する
   Future<void> deleteSession({required Session session}) async {
-    if (session.status == Status.inProgress) {
+    final owner = await getUser(session.userId);
+    if (session.status == Status.inProgress || owner?.isLocal == true) {
       await (delete(sessions)..where((tbl) => tbl.id.equals(session.id))).go();
       return;
     }

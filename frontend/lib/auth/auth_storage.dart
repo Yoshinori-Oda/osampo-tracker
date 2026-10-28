@@ -10,16 +10,24 @@ class StoredAuth {
   const StoredAuth({required this.userId, required this.accessToken, required this.refreshToken});
 }
 
-/// トークン・ログイン中のユーザー・端末IDの保存先。テストではメモリ上の実装に差し替える
+/// トークン・今のユーザー・端末IDの保存先。テストではメモリ上の実装に差し替える。
+/// 今のユーザー(current_user_id)は、通常のアカウントではトークンと組で、ローカルアカウントでは単独で保存する
 abstract class AuthStorage {
   /// 端末ID。初回はUUIDを生成して保存する。ログアウトしても消さない(同じ端末として扱い続けるため)
   Future<String> deviceId();
 
+  /// 今のユーザーとトークンの組。トークンが揃っていなければnull
   Future<StoredAuth?> read();
+
+  /// 今のユーザーのID(トークンの有無に関係なく)
+  Future<String?> readCurrentUserId();
 
   Future<void> save(StoredAuth auth);
 
-  /// ログイン中のユーザーとトークンを消す(端末IDは残す)
+  /// ローカルアカウントを今のユーザーにする(トークンは消す)
+  Future<void> saveLocalUser(String userId);
+
+  /// 今のユーザーとトークンを消す(端末IDは残す)
   Future<void> clear();
 }
 
@@ -53,10 +61,20 @@ class SecureAuthStorage implements AuthStorage {
   }
 
   @override
+  Future<String?> readCurrentUserId() => _storage.read(key: _kCurrentUserId);
+
+  @override
   Future<void> save(StoredAuth auth) async {
     await _storage.write(key: _kCurrentUserId, value: auth.userId);
     await _storage.write(key: _kAccessToken, value: auth.accessToken);
     await _storage.write(key: _kRefreshToken, value: auth.refreshToken);
+  }
+
+  @override
+  Future<void> saveLocalUser(String userId) async {
+    await _storage.delete(key: _kAccessToken);
+    await _storage.delete(key: _kRefreshToken);
+    await _storage.write(key: _kCurrentUserId, value: userId);
   }
 
   @override
