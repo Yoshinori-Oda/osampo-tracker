@@ -77,6 +77,21 @@ class $UsersTable extends Users with TableInfo<$UsersTable, User> {
     requiredDuringInsert: false,
     defaultValue: currentDateAndTime,
   );
+  static const VerificationMeta _isLocalMeta = const VerificationMeta(
+    'isLocal',
+  );
+  @override
+  late final GeneratedColumn<bool> isLocal = GeneratedColumn<bool>(
+    'is_local',
+    aliasedName,
+    false,
+    type: DriftSqlType.bool,
+    requiredDuringInsert: false,
+    defaultConstraints: GeneratedColumn.constraintIsAlways(
+      'CHECK ("is_local" IN (0, 1))',
+    ),
+    defaultValue: const Constant(false),
+  );
   @override
   List<GeneratedColumn> get $columns => [
     id,
@@ -85,6 +100,7 @@ class $UsersTable extends Users with TableInfo<$UsersTable, User> {
     emailVerified,
     lastSyncedAt,
     createdAt,
+    isLocal,
   ];
   @override
   String get aliasedName => _alias ?? actualTableName;
@@ -142,6 +158,12 @@ class $UsersTable extends Users with TableInfo<$UsersTable, User> {
         createdAt.isAcceptableOrUnknown(data['created_at']!, _createdAtMeta),
       );
     }
+    if (data.containsKey('is_local')) {
+      context.handle(
+        _isLocalMeta,
+        isLocal.isAcceptableOrUnknown(data['is_local']!, _isLocalMeta),
+      );
+    }
     return context;
   }
 
@@ -175,6 +197,10 @@ class $UsersTable extends Users with TableInfo<$UsersTable, User> {
         DriftSqlType.dateTime,
         data['${effectivePrefix}created_at'],
       )!,
+      isLocal: attachedDatabase.typeMapping.read(
+        DriftSqlType.bool,
+        data['${effectivePrefix}is_local'],
+      )!,
     );
   }
 
@@ -191,6 +217,7 @@ class User extends DataClass implements Insertable<User> {
   final bool emailVerified;
   final String? lastSyncedAt;
   final DateTime createdAt;
+  final bool isLocal;
   const User({
     required this.id,
     required this.email,
@@ -198,6 +225,7 @@ class User extends DataClass implements Insertable<User> {
     required this.emailVerified,
     this.lastSyncedAt,
     required this.createdAt,
+    required this.isLocal,
   });
   @override
   Map<String, Expression> toColumns(bool nullToAbsent) {
@@ -210,6 +238,7 @@ class User extends DataClass implements Insertable<User> {
       map['last_synced_at'] = Variable<String>(lastSyncedAt);
     }
     map['created_at'] = Variable<DateTime>(createdAt);
+    map['is_local'] = Variable<bool>(isLocal);
     return map;
   }
 
@@ -223,6 +252,7 @@ class User extends DataClass implements Insertable<User> {
           ? const Value.absent()
           : Value(lastSyncedAt),
       createdAt: Value(createdAt),
+      isLocal: Value(isLocal),
     );
   }
 
@@ -238,6 +268,7 @@ class User extends DataClass implements Insertable<User> {
       emailVerified: serializer.fromJson<bool>(json['emailVerified']),
       lastSyncedAt: serializer.fromJson<String?>(json['lastSyncedAt']),
       createdAt: serializer.fromJson<DateTime>(json['createdAt']),
+      isLocal: serializer.fromJson<bool>(json['isLocal']),
     );
   }
   @override
@@ -250,6 +281,7 @@ class User extends DataClass implements Insertable<User> {
       'emailVerified': serializer.toJson<bool>(emailVerified),
       'lastSyncedAt': serializer.toJson<String?>(lastSyncedAt),
       'createdAt': serializer.toJson<DateTime>(createdAt),
+      'isLocal': serializer.toJson<bool>(isLocal),
     };
   }
 
@@ -260,6 +292,7 @@ class User extends DataClass implements Insertable<User> {
     bool? emailVerified,
     Value<String?> lastSyncedAt = const Value.absent(),
     DateTime? createdAt,
+    bool? isLocal,
   }) => User(
     id: id ?? this.id,
     email: email ?? this.email,
@@ -267,6 +300,7 @@ class User extends DataClass implements Insertable<User> {
     emailVerified: emailVerified ?? this.emailVerified,
     lastSyncedAt: lastSyncedAt.present ? lastSyncedAt.value : this.lastSyncedAt,
     createdAt: createdAt ?? this.createdAt,
+    isLocal: isLocal ?? this.isLocal,
   );
   User copyWithCompanion(UsersCompanion data) {
     return User(
@@ -282,6 +316,7 @@ class User extends DataClass implements Insertable<User> {
           ? data.lastSyncedAt.value
           : this.lastSyncedAt,
       createdAt: data.createdAt.present ? data.createdAt.value : this.createdAt,
+      isLocal: data.isLocal.present ? data.isLocal.value : this.isLocal,
     );
   }
 
@@ -293,7 +328,8 @@ class User extends DataClass implements Insertable<User> {
           ..write('displayName: $displayName, ')
           ..write('emailVerified: $emailVerified, ')
           ..write('lastSyncedAt: $lastSyncedAt, ')
-          ..write('createdAt: $createdAt')
+          ..write('createdAt: $createdAt, ')
+          ..write('isLocal: $isLocal')
           ..write(')'))
         .toString();
   }
@@ -306,6 +342,7 @@ class User extends DataClass implements Insertable<User> {
     emailVerified,
     lastSyncedAt,
     createdAt,
+    isLocal,
   );
   @override
   bool operator ==(Object other) =>
@@ -316,7 +353,8 @@ class User extends DataClass implements Insertable<User> {
           other.displayName == this.displayName &&
           other.emailVerified == this.emailVerified &&
           other.lastSyncedAt == this.lastSyncedAt &&
-          other.createdAt == this.createdAt);
+          other.createdAt == this.createdAt &&
+          other.isLocal == this.isLocal);
 }
 
 class UsersCompanion extends UpdateCompanion<User> {
@@ -326,6 +364,7 @@ class UsersCompanion extends UpdateCompanion<User> {
   final Value<bool> emailVerified;
   final Value<String?> lastSyncedAt;
   final Value<DateTime> createdAt;
+  final Value<bool> isLocal;
   final Value<int> rowid;
   const UsersCompanion({
     this.id = const Value.absent(),
@@ -334,6 +373,7 @@ class UsersCompanion extends UpdateCompanion<User> {
     this.emailVerified = const Value.absent(),
     this.lastSyncedAt = const Value.absent(),
     this.createdAt = const Value.absent(),
+    this.isLocal = const Value.absent(),
     this.rowid = const Value.absent(),
   });
   UsersCompanion.insert({
@@ -343,6 +383,7 @@ class UsersCompanion extends UpdateCompanion<User> {
     this.emailVerified = const Value.absent(),
     this.lastSyncedAt = const Value.absent(),
     this.createdAt = const Value.absent(),
+    this.isLocal = const Value.absent(),
     this.rowid = const Value.absent(),
   }) : id = Value(id);
   static Insertable<User> custom({
@@ -352,6 +393,7 @@ class UsersCompanion extends UpdateCompanion<User> {
     Expression<bool>? emailVerified,
     Expression<String>? lastSyncedAt,
     Expression<DateTime>? createdAt,
+    Expression<bool>? isLocal,
     Expression<int>? rowid,
   }) {
     return RawValuesInsertable({
@@ -361,6 +403,7 @@ class UsersCompanion extends UpdateCompanion<User> {
       if (emailVerified != null) 'email_verified': emailVerified,
       if (lastSyncedAt != null) 'last_synced_at': lastSyncedAt,
       if (createdAt != null) 'created_at': createdAt,
+      if (isLocal != null) 'is_local': isLocal,
       if (rowid != null) 'rowid': rowid,
     });
   }
@@ -372,6 +415,7 @@ class UsersCompanion extends UpdateCompanion<User> {
     Value<bool>? emailVerified,
     Value<String?>? lastSyncedAt,
     Value<DateTime>? createdAt,
+    Value<bool>? isLocal,
     Value<int>? rowid,
   }) {
     return UsersCompanion(
@@ -381,6 +425,7 @@ class UsersCompanion extends UpdateCompanion<User> {
       emailVerified: emailVerified ?? this.emailVerified,
       lastSyncedAt: lastSyncedAt ?? this.lastSyncedAt,
       createdAt: createdAt ?? this.createdAt,
+      isLocal: isLocal ?? this.isLocal,
       rowid: rowid ?? this.rowid,
     );
   }
@@ -406,6 +451,9 @@ class UsersCompanion extends UpdateCompanion<User> {
     if (createdAt.present) {
       map['created_at'] = Variable<DateTime>(createdAt.value);
     }
+    if (isLocal.present) {
+      map['is_local'] = Variable<bool>(isLocal.value);
+    }
     if (rowid.present) {
       map['rowid'] = Variable<int>(rowid.value);
     }
@@ -421,6 +469,7 @@ class UsersCompanion extends UpdateCompanion<User> {
           ..write('emailVerified: $emailVerified, ')
           ..write('lastSyncedAt: $lastSyncedAt, ')
           ..write('createdAt: $createdAt, ')
+          ..write('isLocal: $isLocal, ')
           ..write('rowid: $rowid')
           ..write(')'))
         .toString();
@@ -1717,6 +1766,7 @@ typedef $$UsersTableCreateCompanionBuilder =
       Value<bool> emailVerified,
       Value<String?> lastSyncedAt,
       Value<DateTime> createdAt,
+      Value<bool> isLocal,
       Value<int> rowid,
     });
 typedef $$UsersTableUpdateCompanionBuilder =
@@ -1727,6 +1777,7 @@ typedef $$UsersTableUpdateCompanionBuilder =
       Value<bool> emailVerified,
       Value<String?> lastSyncedAt,
       Value<DateTime> createdAt,
+      Value<bool> isLocal,
       Value<int> rowid,
     });
 
@@ -1789,6 +1840,11 @@ class $$UsersTableFilterComposer extends Composer<_$AppDatabase, $UsersTable> {
 
   ColumnFilters<DateTime> get createdAt => $composableBuilder(
     column: $table.createdAt,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<bool> get isLocal => $composableBuilder(
+    column: $table.isLocal,
     builder: (column) => ColumnFilters(column),
   );
 
@@ -1856,6 +1912,11 @@ class $$UsersTableOrderingComposer
     column: $table.createdAt,
     builder: (column) => ColumnOrderings(column),
   );
+
+  ColumnOrderings<bool> get isLocal => $composableBuilder(
+    column: $table.isLocal,
+    builder: (column) => ColumnOrderings(column),
+  );
 }
 
 class $$UsersTableAnnotationComposer
@@ -1890,6 +1951,9 @@ class $$UsersTableAnnotationComposer
 
   GeneratedColumn<DateTime> get createdAt =>
       $composableBuilder(column: $table.createdAt, builder: (column) => column);
+
+  GeneratedColumn<bool> get isLocal =>
+      $composableBuilder(column: $table.isLocal, builder: (column) => column);
 
   Expression<T> sessionsRefs<T extends Object>(
     Expression<T> Function($$SessionsTableAnnotationComposer a) f,
@@ -1951,6 +2015,7 @@ class $$UsersTableTableManager
                 Value<bool> emailVerified = const Value.absent(),
                 Value<String?> lastSyncedAt = const Value.absent(),
                 Value<DateTime> createdAt = const Value.absent(),
+                Value<bool> isLocal = const Value.absent(),
                 Value<int> rowid = const Value.absent(),
               }) => UsersCompanion(
                 id: id,
@@ -1959,6 +2024,7 @@ class $$UsersTableTableManager
                 emailVerified: emailVerified,
                 lastSyncedAt: lastSyncedAt,
                 createdAt: createdAt,
+                isLocal: isLocal,
                 rowid: rowid,
               ),
           createCompanionCallback:
@@ -1969,6 +2035,7 @@ class $$UsersTableTableManager
                 Value<bool> emailVerified = const Value.absent(),
                 Value<String?> lastSyncedAt = const Value.absent(),
                 Value<DateTime> createdAt = const Value.absent(),
+                Value<bool> isLocal = const Value.absent(),
                 Value<int> rowid = const Value.absent(),
               }) => UsersCompanion.insert(
                 id: id,
@@ -1977,6 +2044,7 @@ class $$UsersTableTableManager
                 emailVerified: emailVerified,
                 lastSyncedAt: lastSyncedAt,
                 createdAt: createdAt,
+                isLocal: isLocal,
                 rowid: rowid,
               ),
           withReferenceMapper: (p0) => p0
